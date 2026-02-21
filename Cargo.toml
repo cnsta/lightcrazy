@@ -1,0 +1,49 @@
+[package]
+name = "lightcrazy"
+version = "0.2.1"
+edition = "2024"
+license = "MIT"
+authors = ["cnst <mail@cnst.dev>"]
+description = "Control software for the Pulsar X2 CrazyLight mouse"
+repository = "https://github.com/cnsta/crazylight"
+readme = "README.md"
+keywords = ["mouse", "pulsar", "hid", "tray", "lightcrazy"]
+categories = ["hardware-support"]
+
+[dependencies]
+# Core
+anyhow = "1.0"
+log = "0.4"
+env_logger = "0.11"
+
+# USB/HID
+hidapi = "2.6"
+
+# TUI
+ratatui = "0.30"
+crossterm = "0.29"
+throbber-widgets-tui = "0.10"
+
+# Tray
+ksni = { version = "0.3", features = ["blocking"] }
+notify-rust = { version = "4.11", default-features = false, features = ["d"] }
+ctrlc = "3.5"
+
+# Configuration
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+dirs = "6.0"
+shellexpand = "3.1"
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.31", features = ["fs", "poll"] }
+
+[lib]
+name = "lightcrazy"
+path = "src/lib.rs"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
