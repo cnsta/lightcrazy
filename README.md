@@ -1,6 +1,9 @@
 # LIGHTCRAZY
 
-Linux control software for the Pulsar X2 CrazyLight gaming mouse.
+Linux control software for the Pulsar X2 CrazyLight.
+
+This project was created solely for personal use. But I figured I might aswell
+release it on the off-chance that someone might find it useful!
 
 ## Features
 
@@ -102,7 +105,3 @@ or use the `service.terminal` NixOS option.
   protocol reverse engineering and battery command sequences
 - [NotAShelf/tailray](https://github.com/NotAShelf/tailray) - tray architecture
   reference
-
-## License
-
-MIT
