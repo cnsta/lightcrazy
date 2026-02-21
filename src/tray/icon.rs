@@ -1,9 +1,9 @@
-/// Return the freedesktop icon name for the current battery state.
-///
-/// Uses the standard freedesktop stepped icon names:
-/// Discharging: "battery-level-{0,10,20,...,90}-symbolic"
-/// Charging:    "battery-level-{0,10,20,...,90}-charging-symbolic"
-/// Full:        "battery-level-100-charged-symbolic"  (level == 100 only)
+// Return the freedesktop icon name for the current battery state.
+//
+// Uses the standard freedesktop stepped icon names:
+// Discharging: "battery-level-{0,10,20,...,90}-symbolic"
+// Charging:    "battery-level-{0,10,20,...,90}-charging-symbolic"
+// Full:        "battery-level-100-charged-symbolic"  (level == 100 only)
 pub fn get_battery_icon_name(level: u8, is_charging: bool) -> String {
     // Over-reported firmware values or a true 100% reading.
     if level >= 100 {

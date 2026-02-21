@@ -69,21 +69,21 @@ pub const SETTINGS_ROWS: [SettingRow; 8] = [
 ];
 
 pub struct App {
-    /// Shared, mutex-guarded device handle.
-    ///
-    /// The same Arc is given to BatteryWorker so all HID access goes through
-    /// one file descriptor, serialized by the lock. None when not connected.
+    // Shared, mutex-guarded device handle.
+    //
+    // The same Arc is given to BatteryWorker so all HID access goes through
+    // one file descriptor, serialized by the lock. None when not connected.
     pub device: Option<Arc<Mutex<Device>>>,
 
-    /// Cached at startup, these never change while the TUI is running and
-    /// must not require a lock acquisition inside the render loop.
+    // Cached at startup, these never change while the TUI is running and
+    // must not require a lock acquisition inside the render loop.
     pub device_path: String,
     pub device_wired: bool,
 
     pub settings: Settings,
     pub battery: Option<protocol::MouseStatus>,
-    /// True until the worker delivers its first battery reading.
-    /// Starts false when there is no device (no point showing a spinner).
+    // True until the worker delivers its first battery reading.
+    // Starts false when there is no device (no point showing a spinner).
     pub battery_loading: bool,
     pub firmware: Option<String>,
 
@@ -93,7 +93,7 @@ pub struct App {
     pub status_msg: Option<(String, bool, Instant)>,
     pub should_quit: bool,
 
-    /// Throbber animation state, advanced each tick while battery_loading is true.
+    // Throbber animation state, advanced each tick while battery_loading is true.
     pub throbber_state: ThrobberState,
 
     _worker: Option<BatteryWorker>,
@@ -213,14 +213,14 @@ impl App {
         }
     }
 
-    /// Acquire the device lock non-blocking and call "f" with a reference.
-    ///
-    /// Returns false (and sets a status message) if:
-    /// * No device was found at startup.
-    /// * The worker holds the lock (battery poll in progress).
-    ///
-    /// try_lock means a user action always loses to an in-progress battery
-    /// poll rather than blocking the UI thread for up to ~2 seconds.
+    // Acquire the device lock non-blocking and call "f" with a reference.
+    //
+    // Returns false (and sets a status message) if:
+    // * No device was found at startup.
+    // * The worker holds the lock (battery poll in progress).
+    //
+    // try_lock means a user action always loses to an in-progress battery
+    // poll rather than blocking the UI thread for up to ~2 seconds.
     fn with_device<F>(&mut self, f: F) -> bool
     where
         F: FnOnce(&Device),
@@ -349,8 +349,8 @@ impl Drop for App {
     }
 }
 
-/// Apply all stored settings to an already-open device reference.
-/// Called once at startup with exclusive access before the worker is spawned.
+// Apply all stored settings to an already-open device reference.
+// Called once at startup with exclusive access before the worker is spawned.
 fn apply_settings_to_device(dev: &Device, settings: &Settings) {
     let _ = protocol::set_polling_rate(dev, settings.polling_rate());
     let _ = protocol::set_lod(dev, settings.lod());

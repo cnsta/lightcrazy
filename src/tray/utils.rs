@@ -93,11 +93,11 @@ fn init_tray() -> anyhow::Result<(
     Ok((ctx, handle))
 }
 
-/// Background thread that periodically reads battery and updates the tray icon.
-///
-/// Skips the cycle if the TUI is open (UI lock held) to avoid inter-process
-/// HID contention. When it does poll, holds the cross-process device lock for
-/// the duration so the TUI startup cannot open the device mid-protocol.
+// Background thread that periodically reads battery and updates the tray icon.
+//
+// Skips the cycle if the TUI is open (UI lock held) to avoid inter-process
+// HID contention. When it does poll, holds the cross-process device lock for
+// the duration so the TUI startup cannot open the device mid-protocol.
 fn start_battery_monitor(ctx: Arc<Mutex<BatteryContext>>, running: Arc<AtomicBool>) {
     let interval_secs = std::env::var("PULSAR_CHECK_INTERVAL")
         .ok()

@@ -1,13 +1,13 @@
 use notify_rust::{Notification, Urgency};
 use std::time::Instant;
 
-/// Minimum time between repeated low-battery notifications.
+// Minimum time between repeated low-battery notifications.
 const COOLDOWN_SECS: u64 = 300; // 5 minutes
 
 #[derive(Debug, Clone)]
 pub struct NotificationState {
-    /// When the last low-battery notification was sent.
-    /// "None" if no notification has been sent this session.
+    // When the last low-battery notification was sent.
+    // "None" if no notification has been sent this session.
     last_low_battery: Option<Instant>,
 }
 
@@ -18,15 +18,15 @@ impl NotificationState {
         }
     }
 
-    /// Returns true if a low-battery notification should be sent now.
-    ///
-    /// Conditions (all must hold):
-    /// * Not currently charging.
-    /// * Level is at or below the configured threshold.
-    /// * Level has dropped since the last reading (avoids re-alerting
-    ///   at the same level across consecutive polls).
-    /// * No notification has been sent within the last 5 minutes
-    ///   (prevents spam if the mouse sits at threshold for a long time).
+    // Returns true if a low-battery notification should be sent now.
+    //
+    // Conditions (all must hold):
+    // * Not currently charging.
+    // * Level is at or below the configured threshold.
+    // * Level has dropped since the last reading (avoids re-alerting
+    //   at the same level across consecutive polls).
+    // * No notification has been sent within the last 5 minutes
+    //   (prevents spam if the mouse sits at threshold for a long time).
     pub fn should_notify_low_battery(
         &self,
         current_level: u8,
@@ -43,7 +43,7 @@ impl NotificationState {
             .unwrap_or(true)
     }
 
-    /// Send a low-battery notification and record the time for cooldown.
+    // Send a low-battery notification and record the time for cooldown.
     pub fn send_low_battery(&mut self, level: u8) -> anyhow::Result<()> {
         Notification::new()
             .summary("Low Battery")
@@ -58,7 +58,7 @@ impl NotificationState {
         Ok(())
     }
 
-    /// Send a one-shot informational notification (fire and forget).
+    // Send a one-shot informational notification (fire and forget).
     pub fn send_notification(summary: &str, body: &str, icon: &str) {
         let _ = Notification::new()
             .summary(summary)

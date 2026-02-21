@@ -11,8 +11,8 @@ use crate::device::{
     transport::Device,
 };
 
-/// Handle to the background battery worker.
-/// Dropping this signals the worker thread to stop.
+// Handle to the background battery worker.
+// Dropping this signals the worker thread to stop.
 pub struct BatteryWorker {
     running: Arc<AtomicBool>,
 }
@@ -23,22 +23,22 @@ impl Drop for BatteryWorker {
     }
 }
 
-/// A battery update message sent from worker to the UI.
+// A battery update message sent from worker to the UI.
 #[derive(Debug, Clone)]
 pub struct BatteryUpdate {
     pub status: MouseStatus,
 }
 
 impl BatteryWorker {
-    /// Spawn the battery polling worker.
-    ///
-    /// "device" is the same "Arc<Mutex<Device>>" that "App" holds. The worker
-    /// uses "try_lock()" on each poll, if the UI thread is currently sending a
-    /// command, the poll is skipped silently. This ensures the user-initiated
-    /// setting command always wins over a background battery read.
-    ///
-    /// If "device" is "None" (no mouse connected), the thread exits immediately
-    /// and the receiver will never receive an update.
+    // Spawn the battery polling worker.
+    //
+    // "device" is the same "Arc<Mutex<Device>>" that "App" holds. The worker
+    // uses "try_lock()" on each poll, if the UI thread is currently sending a
+    // command, the poll is skipped silently. This ensures the user-initiated
+    // setting command always wins over a background battery read.
+    //
+    // If "device" is "None" (no mouse connected), the thread exits immediately
+    // and the receiver will never receive an update.
     pub fn spawn(
         interval_secs: u64,
         device: Option<Arc<Mutex<Device>>>,
@@ -82,12 +82,12 @@ impl BatteryWorker {
     }
 }
 
-/// Attempt a battery read using the shared device handle.
-///
-/// Uses "try_lock()": if the UI thread currently holds the mutex (e.g. it is
-/// mid-way through sending a DPI command), the poll is skipped. The next
-/// scheduled poll will try again. This prevents the ~2s battery init sequence
-/// from blocking user interactions.
+// Attempt a battery read using the shared device handle.
+//
+// Uses "try_lock()": if the UI thread currently holds the mutex (e.g. it is
+// mid-way through sending a DPI command), the poll is skipped. The next
+// scheduled poll will try again. This prevents the ~2s battery init sequence
+// from blocking user interactions.
 fn poll_battery(device: &Arc<Mutex<Device>>, tx: &mpsc::Sender<BatteryUpdate>) {
     match device.try_lock() {
         Ok(dev) => match protocol::get_mouse_battery(&dev) {

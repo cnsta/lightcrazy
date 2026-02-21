@@ -134,10 +134,10 @@ fn send_prepare_sequence(device: &Device) -> Result<()> {
     Ok(())
 }
 
-/// Get firmware version from USB descriptor
-/// Return the firmware version read from the USB bcdDevice descriptor.
-///
-/// Captured at Device::open() from HidDeviceInfo.
+// Get firmware version from USB descriptor
+// Return the firmware version read from the USB bcdDevice descriptor.
+//
+// Captured at Device::open() from HidDeviceInfo.
 pub fn get_firmware(device: &Device) -> Result<String> {
     Ok(device.firmware_version().to_string())
 }

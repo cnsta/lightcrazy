@@ -31,7 +31,7 @@ impl Default for Settings {
 }
 
 impl Settings {
-    /// Load settings from config file, or create default if not exists
+    // Load settings from config file, or create default if not exists
     pub fn load() -> Self {
         match Self::try_load() {
             Ok(settings) => settings,
@@ -61,7 +61,7 @@ impl Settings {
         Ok(settings)
     }
 
-    /// Save settings to config file
+    // Save settings to config file
     pub fn save(&self) -> Result<()> {
         let path = Self::config_path()?;
 
@@ -84,7 +84,7 @@ impl Settings {
         Ok(config_dir.join("lightcrazy").join("settings.json"))
     }
 
-    /// Convert to PollingRate enum
+    // Convert to PollingRate enum
     pub fn polling_rate(&self) -> PollingRate {
         match self.polling_rate {
             0x08 => PollingRate::Hz125,
@@ -98,7 +98,7 @@ impl Settings {
         }
     }
 
-    /// Convert to LiftOffDistance enum
+    // Convert to LiftOffDistance enum
     pub fn lod(&self) -> LiftOffDistance {
         match self.lod {
             0 => LiftOffDistance::Low,
@@ -108,12 +108,12 @@ impl Settings {
         }
     }
 
-    /// Update from PollingRate enum
+    // Update from PollingRate enum
     pub fn set_polling_rate(&mut self, rate: PollingRate) {
         self.polling_rate = rate as u8;
     }
 
-    /// Update from LiftOffDistance enum
+    // Update from LiftOffDistance enum
     pub fn set_lod(&mut self, lod: LiftOffDistance) {
         self.lod = match lod {
             LiftOffDistance::Low => 0,

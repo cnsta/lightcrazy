@@ -4,51 +4,51 @@ use std::fs::File;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::PathBuf;
 
-/// Guard that holds an exclusive file lock.
-/// Released automatically when dropped.
+// Guard that holds an exclusive file lock.
+// Released automatically when dropped.
 pub struct LockGuard {
     _lock: Flock<File>,
 }
 
-/// Acquire the tray/device ownership lock (non-blocking).
-///
-/// Held by whichever process owns the tray icon. Fails immediately if
-/// another instance already holds it.
+// Acquire the tray/device ownership lock (non-blocking).
+//
+// Held by whichever process owns the tray icon. Fails immediately if
+// another instance already holds it.
 pub fn acquire_tray_lock() -> anyhow::Result<LockGuard> {
     try_acquire_nonblock("lightcrazy-tray")
 }
 
-/// Acquire the UI lock (non-blocking).
-///
-/// Held while the TUI is open. The tray's battery monitor checks this
-/// before each poll and skips if held, preventing inter-process HID
-/// contention during TUI operation.
+// Acquire the UI lock (non-blocking).
+//
+// Held while the TUI is open. The tray's battery monitor checks this
+// before each poll and skips if held, preventing inter-process HID
+// contention during TUI operation.
 pub fn acquire_ui_lock() -> anyhow::Result<LockGuard> {
     try_acquire_nonblock("lightcrazy-ui")
 }
 
-/// Acquire the device access lock (blocking).
-///
-/// Held during any HID protocol exchange that must be atomic, specifically,
-/// the tray's battery poll and the TUI's startup initialization. Unlike the
-/// other locks, this one blocks until the lock is available rather than
-/// failing immediately, so callers can use it to wait for an in-progress
-/// operation to complete.
+// Acquire the device access lock (blocking).
+//
+// Held during any HID protocol exchange that must be atomic, specifically,
+// the tray's battery poll and the TUI's startup initialization. Unlike the
+// other locks, this one blocks until the lock is available rather than
+// failing immediately, so callers can use it to wait for an in-progress
+// operation to complete.
 pub fn acquire_device_lock() -> anyhow::Result<LockGuard> {
     try_acquire_blocking("lightcrazy-device")
 }
 
-/// Returns true if the tray is already running in another process.
+// Returns true if the tray is already running in another process.
 pub fn tray_is_running() -> bool {
     try_acquire_nonblock("lightcrazy-tray").is_err()
 }
 
-/// Returns true if the TUI is currently open in another process.
+// Returns true if the TUI is currently open in another process.
 pub fn ui_is_active() -> bool {
     try_acquire_nonblock("lightcrazy-ui").is_err()
 }
 
-/// Non-blocking exclusive lock, fails immediately if already held.
+// Non-blocking exclusive lock, fails immediately if already held.
 fn try_acquire_nonblock(name: &str) -> anyhow::Result<LockGuard> {
     let file = open_lock_file(name)?;
     let lock = Flock::lock(file, FlockArg::LockExclusiveNonblock).map_err(|_| {
@@ -62,7 +62,7 @@ fn try_acquire_nonblock(name: &str) -> anyhow::Result<LockGuard> {
     Ok(LockGuard { _lock: lock })
 }
 
-/// Blocking exclusive lock, waits until the lock is available.
+// Blocking exclusive lock, waits until the lock is available.
 fn try_acquire_blocking(name: &str) -> anyhow::Result<LockGuard> {
     let file = open_lock_file(name)?;
     let lock = Flock::lock(file, FlockArg::LockExclusive)

@@ -20,9 +20,9 @@ pub struct Device {
     device: RawHidDevice,
     mode: ConnectionMode,
     path: PathBuf,
-    /// Firmware version string decoded from the USB bcdDevice descriptor,
-    /// captured during enumeration when HidDeviceInfo is still available.
-    /// Format: "{major}.{minor:02}", e.g. "2.25" from bcdDevice 0x0225.
+    // Firmware version string decoded from the USB bcdDevice descriptor,
+    // captured during enumeration when HidDeviceInfo is still available.
+    // Format: "{major}.{minor:02}", e.g. "2.25" from bcdDevice 0x0225.
     firmware_version: String,
 }
 
@@ -67,8 +67,8 @@ impl Device {
         })
     }
 
-    /// Firmware version decoded from the USB "bcdDevice" descriptor.
-    /// e.g. "2.25" for a device reporting "bcdDevice 2.25" in lsusb output.
+    // Firmware version decoded from the USB "bcdDevice" descriptor.
+    // e.g. "2.25" for a device reporting "bcdDevice 2.25" in lsusb output.
     pub fn firmware_version(&self) -> &str {
         &self.firmware_version
     }
@@ -144,16 +144,16 @@ impl Device {
     }
 }
 
-/// Decode a USB "bcdDevice" value into a human-readable version string.
-///
-/// The USB spec encodes "bcdDevice" in binary: the high byte is
-/// the major version and the low byte is the minor version, each nibble being
-/// a decimal digit.
-///
-/// Examples:
-/// "0x0225" -> "2.25"
-/// "0x0100" -> "1.00"
-/// "0x0310" -> "3.10"
+// Decode a USB "bcdDevice" value into a human-readable version string.
+//
+// The USB spec encodes "bcdDevice" in binary: the high byte is
+// the major version and the low byte is the minor version, each nibble being
+// a decimal digit.
+//
+// Examples:
+// "0x0225" -> "2.25"
+// "0x0100" -> "1.00"
+// "0x0310" -> "3.10"
 fn bcd_version(bcd: u16) -> String {
     let major_bcd = (bcd >> 8) as u8;
     let minor_bcd = (bcd & 0xFF) as u8;

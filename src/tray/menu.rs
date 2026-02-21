@@ -9,9 +9,9 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct BatteryContext {
-    /// The current battery reading. "None" until the first successful poll
-    /// completes. Using Option avoids showing "0%" or a low-battery icon
-    /// in the window between service start and the first device read.
+    // The current battery reading. "None" until the first successful poll
+    // completes. Using Option avoids showing "0%" or a low-battery icon
+    // in the window between service start and the first device read.
     pub battery: Option<(u8, bool)>, // (level, is_charging)
     pub threshold: u8,
     pub notifications: NotificationState,
@@ -69,15 +69,15 @@ impl BatteryTray {
         Ok(())
     }
 
-    /// Spawn this binary with "--options" in a terminal emulator.
-    ///
-    /// Resolution order:
-    ///   1. "$TERMINAL", explicit user preference, tried as-is.
-    ///   2. "$TERM" hint, several emulators set `$TERM` to a value that
-    ///      identifies their binary: alacritty->"alacritty", foot->"foot",
-    ///      kitty->"xterm-kitty", wezterm->"wezterm", ghostty->"xterm-ghostty".
-    ///      We map these to the correct binary and try before the generic list.
-    ///   3. Hard-coded fallback list, skipping anything already tried above.
+    // Spawn this binary with "--options" in a terminal emulator.
+    //
+    // Resolution order:
+    //   1. "$TERMINAL", explicit user preference, tried as-is.
+    //   2. "$TERM" hint, several emulators set `$TERM` to a value that
+    //      identifies their binary: alacritty->"alacritty", foot->"foot",
+    //      kitty->"xterm-kitty", wezterm->"wezterm", ghostty->"xterm-ghostty".
+    //      We map these to the correct binary and try before the generic list.
+    //   3. Hard-coded fallback list, skipping anything already tried above.
     fn launch_tui() {
         let bin = std::env::current_exe()
             .ok()
@@ -159,10 +159,10 @@ impl BatteryTray {
     }
 }
 
-/// Probe known NixOS profile bin directories for a terminal emulator.
-///
-/// Returns the absolute path of the first match found, or None.
-/// "skip" contains names already attempted via PATH-based lookup.
+// Probe known NixOS profile bin directories for a terminal emulator.
+//
+// Returns the absolute path of the first match found, or None.
+// "skip" contains names already attempted via PATH-based lookup.
 fn find_terminal_in_nix_profiles(skip: &[&str]) -> Option<String> {
     use std::path::PathBuf;
 

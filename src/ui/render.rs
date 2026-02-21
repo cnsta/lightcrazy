@@ -179,7 +179,7 @@ fn render_status(frame: &mut Frame, app: &mut App, area: Rect) {
     }
 }
 
-/// Shared helper: appends firmware, polling rate, and DPI lines.
+// Shared helper: appends firmware, polling rate, and DPI lines.
 fn push_status_info(lines: &mut Vec<Line>, app: &App) {
     lines.push(Line::raw(""));
     if let Some(fw) = app.firmware.as_deref() {
@@ -195,7 +195,7 @@ fn push_status_info(lines: &mut Vec<Line>, app: &App) {
     ));
 }
 
-/// Renders the status panel with a live throbber while battery is loading.
+// Renders the status panel with a live throbber while battery is loading.
 fn render_battery_throbber(
     frame: &mut Frame,
     app: &mut App,
