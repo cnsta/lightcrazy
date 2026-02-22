@@ -3,7 +3,7 @@
 Linux control software for the Pulsar X2 CrazyLight.
 
 This project was created solely for personal use. But I figured I might aswell
-release it on the off-chance that someone might find it useful!
+release it on the off-chance that someone else might find it useful!
 
 ## Features
 
@@ -32,13 +32,8 @@ inputs.lightcrazy = {
 # configuration.nix
 hardware.lightcrazy = {
   enable = true;        # installs package + udev rules
-
   service = {
-    enable    = true;   # systemd user service (tray mode)
-    threshold = 10;     # low-battery alert at 10%
-    interval  = 60;     # battery check interval in seconds
-    terminal  = "";     # terminal emulator for the settings panel
-                        # leave empty to auto-detect from $TERMINAL / $TERM
+    enable = true;      # systemd user service
   };
 };
 ```
@@ -77,18 +72,10 @@ KERNEL=="hidraw*",   ATTRS{idVendor}=="3710", ATTRS{idProduct}=="5406", MODE="06
 sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
 
-## Architecture
-
-Single binary. Default invocation starts a background tray service that monitors
-battery via HID. `--options` opens a TUI in a terminal. Both modes share a
-single HID handle (`Arc<Mutex<Device>>`) so there is no device contention. A
-flock-based lock file prevents multiple tray instances and coordinates polling,
-the tray skips battery reads while the TUI is open.
-
 ## Troubleshooting
 
 Since I exclusively use NixOS and Hyprland, these are the only environments that
-have been thoroughly tested. Feel free to open an issue with bugs.
+have been thoroughly tested. Feel free to open an issue if you encounter bugs.
 
 **Device not found**: check `lsusb | grep 3710`, verify udev rules
 
