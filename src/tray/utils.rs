@@ -25,7 +25,7 @@ pub struct TrayServiceHandle {
 
 impl Drop for TrayServiceHandle {
     fn drop(&mut self) {
-        info!("TrayServiceHandle dropped — stopping background tray threads");
+        info!("TrayServiceHandle dropped, stopping background tray threads");
         self.running.store(false, Ordering::Release);
     }
 }
@@ -92,10 +92,9 @@ fn start_battery_monitor(
 ) {
     const STARTUP_RETRY_SECS: u64 = 5;
 
-    let interval_secs = std::env::var("PULSAR_CHECK_INTERVAL")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(60u64);
+    // Read interval from settings so any change made in the TUI takes
+    // effect on the next tray restart (interval is captured once per session).
+    let interval_secs = crate::settings::Settings::load().battery_interval_secs;
 
     info!(
         "Battery monitoring: checking every {}s (startup retry every {}s)",
@@ -120,7 +119,7 @@ fn start_battery_monitor(
             }
 
             if crate::lock::ui_is_active() {
-                info!("TUI active — skipping battery poll");
+                info!("TUI active, skipping battery poll");
                 continue;
             }
 
@@ -143,7 +142,7 @@ fn start_battery_monitor(
 
                     if !initial_read_done {
                         info!(
-                            "Initial battery read succeeded — switching to {}s interval",
+                            "Initial battery read succeeded, switching to {}s interval",
                             interval_secs
                         );
                         initial_read_done = true;

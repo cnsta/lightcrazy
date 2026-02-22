@@ -13,20 +13,13 @@ pub struct BatteryContext {
     /// completes. Using Option avoids showing "0%" or a low-battery icon
     /// in the window between service start and the first device read.
     pub battery: Option<(u8, bool)>, // (level, is_charging)
-    pub threshold: u8,
     pub notifications: NotificationState,
 }
 
 impl Default for BatteryContext {
     fn default() -> Self {
-        let threshold = std::env::var("PULSAR_BATTERY_THRESHOLD")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(10);
-
         Self {
             battery: None,
-            threshold,
             notifications: NotificationState::new(),
         }
     }
@@ -40,6 +33,10 @@ impl BatteryTray {
     pub fn update_battery(&self) -> anyhow::Result<()> {
         let dev = Device::open()?;
         let status = protocol::get_mouse_battery(&dev)?;
+
+        // Read threshold from settings each poll so changes made in the TUI
+        // take effect without restarting the tray service.
+        let threshold = crate::settings::Settings::load().notification_threshold;
 
         let mut ctx = self.ctx.lock().unwrap();
 
@@ -58,7 +55,7 @@ impl BatteryTray {
         let should_notify = ctx.notifications.should_notify_low_battery(
             status.battery_level,
             old_level,
-            ctx.threshold,
+            threshold,
             status.is_charging,
         );
 
@@ -161,15 +158,15 @@ impl BatteryTray {
     }
 }
 
-// Probe known NixOS profile bin directories for a terminal emulator.
-//
-// Returns the absolute path of the first match found, or None.
-// `skip` contains names already attempted via PATH-based lookup.
+/// Probe known NixOS profile bin directories for a terminal emulator.
+///
+/// Returns the absolute path of the first match found, or None.
+/// `skip` contains names already attempted via PATH-based lookup.
 fn find_terminal_in_nix_profiles(skip: &[&str]) -> Option<String> {
     use std::path::PathBuf;
 
     // Build candidate search dirs. The per-user profile path requires the
-    // username, fall back to $HOME-based path if USER is not set.
+    // username; fall back to $HOME-based path if USER is not set.
     let user = std::env::var("USER").unwrap_or_default();
     let home = std::env::var("HOME").unwrap_or_default();
 
@@ -318,12 +315,6 @@ impl Tray for BatteryTray {
         vec![
             StandardItem {
                 label: battery_text,
-                enabled: false,
-                ..Default::default()
-            }
-            .into(),
-            StandardItem {
-                label: format!("Alert threshold: {}%", ctx.threshold),
                 enabled: false,
                 ..Default::default()
             }
