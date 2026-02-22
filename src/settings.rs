@@ -5,15 +5,34 @@ use std::path::PathBuf;
 
 use crate::device::protocol::{LiftOffDistance, PollingRate};
 
+/// Battery check interval presets in seconds.
+/// Exposed as selectable steps in the TUI.
+pub const INTERVAL_OPTIONS: [u64; 5] = [30, 60, 120, 300, 600];
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
-    pub polling_rate: u8, // Store as u8 for serde compatibility
+    pub polling_rate: u8, // stored as protocol byte for serde compatibility
     pub lod: u8,          // 0=Low, 1=Medium, 2=High
     pub debounce_ms: u8,
     pub angle_snap: bool,
     pub ripple_control: bool,
     pub motion_sync: bool,
     pub turbo_mode: bool,
+    /// Battery percentage at which a low-battery desktop notification fires.
+    /// Range 5–50, adjusted in 5% steps.
+    #[serde(default = "default_notification_threshold")]
+    pub notification_threshold: u8,
+    /// How often the tray polls battery status, in seconds.
+    /// Must be one of INTERVAL_OPTIONS; validated on load.
+    #[serde(default = "default_battery_interval_secs")]
+    pub battery_interval_secs: u64,
+}
+
+fn default_notification_threshold() -> u8 {
+    10
+}
+fn default_battery_interval_secs() -> u64 {
+    60
 }
 
 impl Default for Settings {
@@ -26,19 +45,25 @@ impl Default for Settings {
             ripple_control: false,
             motion_sync: false,
             turbo_mode: false,
+            notification_threshold: default_notification_threshold(),
+            battery_interval_secs: default_battery_interval_secs(),
         }
     }
 }
 
 impl Settings {
-    // Load settings from config file, or create default if not exists
+    /// Load from disk, falling back to defaults on any error.
+    /// Uses `log::warn!` rather than `eprintln!` so it is safe to call
+    /// after the terminal has entered raw mode.
     pub fn load() -> Self {
         match Self::try_load() {
-            Ok(settings) => settings,
+            Ok(mut s) => {
+                s.clamp();
+                s
+            }
             Err(e) => {
-                eprintln!("Warning: Failed to load settings ({}), using defaults", e);
+                log::warn!("Failed to load settings ({}), using defaults", e);
                 let default = Self::default();
-                // Try to save defaults
                 let _ = default.save();
                 default
             }
@@ -47,44 +72,41 @@ impl Settings {
 
     fn try_load() -> Result<Self> {
         let path = Self::config_path()?;
-
         if !path.exists() {
             return Ok(Self::default());
         }
-
         let contents = fs::read_to_string(&path)
             .with_context(|| format!("Failed to read {}", path.display()))?;
-
         let settings: Self =
             serde_json::from_str(&contents).context("Failed to parse settings JSON")?;
-
         Ok(settings)
     }
 
-    // Save settings to config file
     pub fn save(&self) -> Result<()> {
         let path = Self::config_path()?;
-
-        // Ensure parent directory exists
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)
-                .with_context(|| format!("Failed to create directory {}", parent.display()))?;
+                .with_context(|| format!("Failed to create {}", parent.display()))?;
         }
-
         let json = serde_json::to_string_pretty(self).context("Failed to serialize settings")?;
-
         fs::write(&path, json).with_context(|| format!("Failed to write {}", path.display()))?;
-
         Ok(())
+    }
+
+    /// Clamp fields that have valid ranges, so corrupt or hand-edited JSON
+    /// can't put the app into an unrecoverable state.
+    fn clamp(&mut self) {
+        self.notification_threshold = self.notification_threshold.clamp(5, 50);
+        if !INTERVAL_OPTIONS.contains(&self.battery_interval_secs) {
+            self.battery_interval_secs = default_battery_interval_secs();
+        }
     }
 
     fn config_path() -> Result<PathBuf> {
         let config_dir = dirs::config_dir().context("Could not determine config directory")?;
-
         Ok(config_dir.join("lightcrazy").join("settings.json"))
     }
 
-    // Convert to PollingRate enum
     pub fn polling_rate(&self) -> PollingRate {
         match self.polling_rate {
             0x08 => PollingRate::Hz125,
@@ -94,26 +116,23 @@ impl Settings {
             0x10 => PollingRate::Hz2000,
             0x20 => PollingRate::Hz4000,
             0x40 => PollingRate::Hz8000,
-            _ => PollingRate::Hz2000, // Default fallback
+            _ => PollingRate::Hz2000,
         }
     }
 
-    // Convert to LiftOffDistance enum
     pub fn lod(&self) -> LiftOffDistance {
         match self.lod {
             0 => LiftOffDistance::Low,
             1 => LiftOffDistance::Medium,
             2 => LiftOffDistance::High,
-            _ => LiftOffDistance::Medium, // Default fallback
+            _ => LiftOffDistance::Medium,
         }
     }
 
-    // Update from PollingRate enum
     pub fn set_polling_rate(&mut self, rate: PollingRate) {
         self.polling_rate = rate as u8;
     }
 
-    // Update from LiftOffDistance enum
     pub fn set_lod(&mut self, lod: LiftOffDistance) {
         self.lod = match lod {
             LiftOffDistance::Low => 0,
@@ -129,18 +148,35 @@ mod tests {
 
     #[test]
     fn test_default_settings() {
-        let settings = Settings::default();
-        assert_eq!(settings.polling_rate, 0x10); // 2000 Hz
-        assert_eq!(settings.lod, 1); // Medium
-        assert_eq!(settings.debounce_ms, 2);
-        assert!(!settings.angle_snap);
+        let s = Settings::default();
+        assert_eq!(s.polling_rate, 0x10);
+        assert_eq!(s.lod, 1);
+        assert_eq!(s.debounce_ms, 2);
+        assert!(!s.angle_snap);
+        assert_eq!(s.notification_threshold, 10);
+        assert_eq!(s.battery_interval_secs, 60);
     }
 
     #[test]
     fn test_polling_rate_conversion() {
-        let mut settings = Settings::default();
-        settings.set_polling_rate(PollingRate::Hz8000);
-        assert_eq!(settings.polling_rate, 0x40);
-        assert_eq!(settings.polling_rate(), PollingRate::Hz8000);
+        let mut s = Settings::default();
+        s.set_polling_rate(PollingRate::Hz8000);
+        assert_eq!(s.polling_rate, 0x40);
+        assert_eq!(s.polling_rate(), PollingRate::Hz8000);
+    }
+
+    #[test]
+    fn test_clamp() {
+        let mut s = Settings::default();
+        s.notification_threshold = 99;
+        s.battery_interval_secs = 7777;
+        s.clamp();
+        assert_eq!(s.notification_threshold, 50);
+        assert_eq!(s.battery_interval_secs, 60); // reset to default
+    }
+
+    #[test]
+    fn test_interval_options_contain_default() {
+        assert!(INTERVAL_OPTIONS.contains(&default_battery_interval_secs()));
     }
 }
