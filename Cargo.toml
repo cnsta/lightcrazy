@@ -1,11 +1,11 @@
 [package]
 name = "lightcrazy"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2024"
 license = "MIT"
 authors = ["cnst <mail@cnst.dev>"]
 description = "Control software for the Pulsar X2 CrazyLight mouse"
-repository = "https://github.com/cnsta/crazylight"
+repository = "https://github.com/cnsta/lightcrazy"
 readme = "README.md"
 keywords = ["mouse", "pulsar", "hid", "tray", "lightcrazy"]
 categories = ["hardware-support"]
@@ -37,6 +37,9 @@ shellexpand = "3.1"
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.31", features = ["fs", "poll"] }
+
+[build-dependencies]
+resvg = "0.47"
 
 [lib]
 name = "lightcrazy"
