@@ -1,7 +1,7 @@
 //! Build script: rasterizes battery icon SVGs from `assets/icons/` into
 //! static ARGB32 pixel arrays embedded in the binary.
 //!
-//! Output: `$OUT_DIR/icons_generated.rs`, included by `src/tray/icons.rs`.
+//! Output: `$OUT_DIR/icons_generated.rs`, included by `src/tray/icon.rs`.
 //! Regenerated whenever any file under `assets/icons/` changes.
 //!
 //! The SNI protocol's `icon_pixmap` field expects ARGB32 in network byte
@@ -10,7 +10,7 @@
 //! un-premultiply and reorder before writing the arrays.
 
 use std::fmt::Write as FmtWrite;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// Pixel sizes to rasterize. The compositor picks the closest available size.
 const SIZES: &[u32] = &[16, 22, 32];

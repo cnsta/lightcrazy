@@ -274,7 +274,7 @@ impl Tray for BatteryTray {
     fn icon_pixmap(&self) -> Vec<Icon> {
         let ctx = self.ctx.lock().unwrap();
         let (level, charging) = ctx.battery.unwrap_or((0, false));
-        crate::tray::icons::get_pixmaps(level, charging)
+        crate::tray::icon::get_pixmaps(level, charging)
     }
 
     fn id(&self) -> String {

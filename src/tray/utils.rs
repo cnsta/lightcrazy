@@ -31,19 +31,19 @@ impl Drop for TrayServiceHandle {
 }
 
 pub fn start_tray_background() -> anyhow::Result<TrayServiceHandle> {
-    info!("Starting LightCrazy tray in background");
+    info!("Starting Pulsar X2 tray in background");
 
     let (ctx, handle) = init_tray()?;
     let running = Arc::new(AtomicBool::new(true));
 
-    start_battery_monitor(ctx.clone(), running.clone());
+    start_battery_monitor(ctx.clone(), running.clone(), handle.clone());
     start_tray_watchdog(ctx, running.clone(), handle);
 
     Ok(TrayServiceHandle { running })
 }
 
 pub fn start_tray_service() -> anyhow::Result<()> {
-    info!("Starting LightCrazy battery tray service");
+    info!("Starting Pulsar X2 battery tray service");
 
     let (ctx, handle) = init_tray()?;
     let running = Arc::new(AtomicBool::new(true));
@@ -57,7 +57,7 @@ pub fn start_tray_service() -> anyhow::Result<()> {
         .context("Failed to set signal handler")?;
     }
 
-    start_battery_monitor(ctx.clone(), running.clone());
+    start_battery_monitor(ctx.clone(), running.clone(), handle.clone());
     start_tray_watchdog(ctx, running.clone(), handle);
 
     while running.load(Ordering::Acquire) {
@@ -84,8 +84,12 @@ fn init_tray() -> anyhow::Result<(
     Ok((ctx, handle))
 }
 
-// Background thread that periodically reads battery and updates the tray icon.
-fn start_battery_monitor(ctx: Arc<Mutex<BatteryContext>>, running: Arc<AtomicBool>) {
+/// Background thread that periodically reads battery and updates the tray icon.
+fn start_battery_monitor(
+    ctx: Arc<Mutex<BatteryContext>>,
+    running: Arc<AtomicBool>,
+    handle: ksni::blocking::Handle<BatteryTray>,
+) {
     const STARTUP_RETRY_SECS: u64 = 5;
 
     let interval_secs = std::env::var("PULSAR_CHECK_INTERVAL")
@@ -131,9 +135,15 @@ fn start_battery_monitor(ctx: Arc<Mutex<BatteryContext>>, running: Arc<AtomicBoo
             let tray = BatteryTray { ctx: ctx.clone() };
             match tray.update_battery() {
                 Ok(()) => {
+                    // Notify the ksni service that properties have changed so it
+                    // pushes updated icon, tooltip, and menu to the host immediately.
+                    // Without this call, the host sees no change signal and keeps
+                    // displaying whatever it cached at spawn time.
+                    handle.update(|_| {});
+
                     if !initial_read_done {
                         info!(
-                            "Initial battery read succeeded, switching to {}s interval",
+                            "Initial battery read succeeded — switching to {}s interval",
                             interval_secs
                         );
                         initial_read_done = true;
