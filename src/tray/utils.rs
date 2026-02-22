@@ -74,18 +74,9 @@ fn init_tray() -> anyhow::Result<(
 )> {
     let ctx = Arc::new(Mutex::new(BatteryContext::default()));
 
-    {
-        let tray = BatteryTray { ctx: ctx.clone() };
-        // Hold the device lock during the initial read so that if this process
-        // was started alongside a TUI (--options with no prior tray), the TUI's
-        // App::new() waits for this read to complete before querying the device.
-        let _dev_lock = crate::lock::acquire_device_lock()
-            .context("Failed to acquire device lock for initial battery read")?;
-        if let Err(e) = tray.update_battery() {
-            warn!("Initial battery read failed: {}", e);
-        }
-    }
-
+    // No blocking read here, the device/dongle is often not ready at
+    // graphical-session.target time. The monitor thread handles the initial
+    // read with short-interval retries so startup is never delayed.
     let tray = BatteryTray { ctx: ctx.clone() };
     let handle = tray.spawn().context("Failed to spawn tray icon")?;
 
@@ -94,34 +85,41 @@ fn init_tray() -> anyhow::Result<(
 }
 
 // Background thread that periodically reads battery and updates the tray icon.
-//
-// Skips the cycle if the TUI is open (UI lock held) to avoid inter-process
-// HID contention. When it does poll, holds the cross-process device lock for
-// the duration so the TUI startup cannot open the device mid-protocol.
 fn start_battery_monitor(ctx: Arc<Mutex<BatteryContext>>, running: Arc<AtomicBool>) {
+    const STARTUP_RETRY_SECS: u64 = 5;
+
     let interval_secs = std::env::var("PULSAR_CHECK_INTERVAL")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(60u64);
 
-    info!("Battery monitoring: checking every {}s", interval_secs);
+    info!(
+        "Battery monitoring: checking every {}s (startup retry every {}s)",
+        interval_secs, STARTUP_RETRY_SECS
+    );
 
     thread::spawn(move || {
+        let mut initial_read_done = false;
+
         while running.load(Ordering::Acquire) {
-            thread::sleep(Duration::from_secs(interval_secs));
+            // Startup phase: short retries until we have one successful read.
+            // Normal phase: long interval between polls.
+            let sleep_secs = if initial_read_done {
+                interval_secs
+            } else {
+                STARTUP_RETRY_SECS
+            };
+            thread::sleep(Duration::from_secs(sleep_secs));
 
             if !running.load(Ordering::Acquire) {
                 break;
             }
 
-            // TUI is open, skip to avoid fighting over the device.
             if crate::lock::ui_is_active() {
                 info!("TUI active — skipping battery poll");
                 continue;
             }
 
-            // Hold the device lock for the entire poll so the TUI can't
-            // start its App::new() initialisation mid-protocol.
             let _dev_lock = match crate::lock::acquire_device_lock() {
                 Ok(lock) => lock,
                 Err(e) => {
@@ -131,8 +129,26 @@ fn start_battery_monitor(ctx: Arc<Mutex<BatteryContext>>, running: Arc<AtomicBoo
             };
 
             let tray = BatteryTray { ctx: ctx.clone() };
-            if let Err(e) = tray.update_battery() {
-                warn!("Battery update failed: {}", e);
+            match tray.update_battery() {
+                Ok(()) => {
+                    if !initial_read_done {
+                        info!(
+                            "Initial battery read succeeded, switching to {}s interval",
+                            interval_secs
+                        );
+                        initial_read_done = true;
+                    }
+                }
+                Err(e) => {
+                    if initial_read_done {
+                        warn!("Battery update failed: {}", e);
+                    } else {
+                        info!(
+                            "Startup battery read not ready yet ({}), retrying in {}s",
+                            e, STARTUP_RETRY_SECS
+                        );
+                    }
+                }
             }
         }
         info!("Battery monitoring thread exiting");
