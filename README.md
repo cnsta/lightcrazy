@@ -3,7 +3,7 @@
 Linux control software for the Pulsar X2 CrazyLight.
 
 This project was created solely for personal use. But I figured I might aswell
-release it on the off-chance that someone else might find it useful!
+release it on the off-chance that someone else finds it useful!
 
 ## Features
 
