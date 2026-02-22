@@ -81,7 +81,7 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 
 Single binary. Default invocation starts a background tray service that monitors
 battery via HID. `--options` opens a TUI in a terminal. Both modes share a
-single HID handle (`Arc<Mutex<Device>>`) so there is no device contention. An
+single HID handle (`Arc<Mutex<Device>>`) so there is no device contention. A
 flock-based lock file prevents multiple tray instances and coordinates polling,
 the tray skips battery reads while the TUI is open.
 
