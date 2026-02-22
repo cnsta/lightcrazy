@@ -9,9 +9,9 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct BatteryContext {
-    // The current battery reading. "None" until the first successful poll
-    // completes. Using Option avoids showing "0%" or a low-battery icon
-    // in the window between service start and the first device read.
+    /// The current battery reading. `None` until the first successful poll
+    /// completes. Using Option avoids showing "0%" or a low-battery icon
+    /// in the window between service start and the first device read.
     pub battery: Option<(u8, bool)>, // (level, is_charging)
     pub threshold: u8,
     pub notifications: NotificationState,
@@ -44,7 +44,7 @@ impl BatteryTray {
         let mut ctx = self.ctx.lock().unwrap();
 
         // Previous level for hysteresis, treat "no prior reading" as 100%
-        // so we don't fire a low-battery alert on the first read.
+        // so we don't fire a low-battery alert on the very first read.
         let old_level = ctx.battery.map(|(l, _)| l).unwrap_or(100);
 
         ctx.battery = Some((status.battery_level, status.is_charging));
@@ -69,15 +69,15 @@ impl BatteryTray {
         Ok(())
     }
 
-    // Spawn this binary with "--options" in a terminal emulator.
-    //
-    // Resolution order:
-    //   1. "$TERMINAL", explicit user preference, tried as-is.
-    //   2. "$TERM" hint, several emulators set `$TERM` to a value that
-    //      identifies their binary: alacritty->"alacritty", foot->"foot",
-    //      kitty->"xterm-kitty", wezterm->"wezterm", ghostty->"xterm-ghostty".
-    //      We map these to the correct binary and try before the generic list.
-    //   3. Hard-coded fallback list, skipping anything already tried above.
+    /// Spawn this binary with `--options` in a terminal emulator.
+    ///
+    /// Resolution order:
+    ///   1. `$TERMINAL`, explicit user preference, tried as-is.
+    ///   2. `$TERM` hint, several emulators set `$TERM` to a value that
+    ///      identifies their binary: alacritty->"alacritty", foot->"foot",
+    ///      kitty->"xterm-kitty", wezterm->"wezterm", ghostty->"xterm-ghostty".
+    ///      We map these to the correct binary and try before the generic list.
+    ///   3. Hard-coded fallback list, skipping anything already tried above.
     fn launch_tui() {
         let bin = std::env::current_exe()
             .ok()
@@ -86,7 +86,7 @@ impl BatteryTray {
 
         let args = ["--options"];
 
-        // Explicit $TERMINAL
+        // 1. Explicit $TERMINAL
         let explicit = std::env::var("TERMINAL").ok().filter(|s| !s.is_empty());
         if let Some(ref term) = explicit {
             if try_launch_in_terminal(term, &bin, &args) {
@@ -94,7 +94,7 @@ impl BatteryTray {
             }
         }
 
-        // Hint from $TERM.
+        // 2. Hint from $TERM.
         //
         // $TERM is normally a terminfo capability name ("xterm-256color" etc.),
         // but several emulators set it to a value that unambiguously identifies
@@ -114,7 +114,7 @@ impl BatteryTray {
             }
         }
 
-        // Generic fallback list, skip anything already attempted above.
+        // 3. Generic fallback list, skip anything already attempted above.
         let fallbacks = [
             "kitty",
             "alacritty",
@@ -138,7 +138,9 @@ impl BatteryTray {
                 return;
             }
         }
-        // NixOS
+
+        // 4. Absolute-path probe for NixOS and other non-standard layouts.
+        //
         // When the service's PATH doesn't include per-user profile directories
         // (e.g. a systemd unit started before the shell profile is sourced),
         // name-based lookup above will fail even though the binary is present.
@@ -162,7 +164,7 @@ impl BatteryTray {
 // Probe known NixOS profile bin directories for a terminal emulator.
 //
 // Returns the absolute path of the first match found, or None.
-// "skip" contains names already attempted via PATH-based lookup.
+// `skip` contains names already attempted via PATH-based lookup.
 fn find_terminal_in_nix_profiles(skip: &[&str]) -> Option<String> {
     use std::path::PathBuf;
 
@@ -263,17 +265,16 @@ fn try_launch_in_terminal(terminal: &str, bin: &str, extra_args: &[&str]) -> boo
 
 impl Tray for BatteryTray {
     fn icon_name(&self) -> String {
-        let ctx = self.ctx.lock().unwrap();
-        match ctx.battery {
-            Some((level, charging)) => crate::tray::icon::get_battery_icon_name(level, charging),
-            // No reading yet, use the standard "missing/unknown" battery icon.
-            // This appears briefly at startup before the first poll completes.
-            None => "battery-missing-symbolic".to_string(),
-        }
+        // Empty string defers to icon_pixmap(). The SNI spec says the host
+        // should prefer pixmap data over a theme name when both are present,
+        // and must use the pixmap when icon_name is empty.
+        String::new()
     }
 
     fn icon_pixmap(&self) -> Vec<Icon> {
-        vec![]
+        let ctx = self.ctx.lock().unwrap();
+        let (level, charging) = ctx.battery.unwrap_or((0, false));
+        crate::tray::icons::get_pixmaps(level, charging)
     }
 
     fn id(&self) -> String {
