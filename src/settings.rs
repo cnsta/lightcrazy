@@ -18,18 +18,14 @@ pub struct Settings {
     pub ripple_control: bool,
     pub motion_sync: bool,
     pub turbo_mode: bool,
-    /// Battery percentage at which a low-battery desktop notification fires.
-    /// Range 5–50, adjusted in 5% steps.
     #[serde(default = "default_notification_threshold")]
     pub notification_threshold: u8,
-    /// How often the tray polls battery status, in seconds.
-    /// Must be one of INTERVAL_OPTIONS; validated on load.
     #[serde(default = "default_battery_interval_secs")]
     pub battery_interval_secs: u64,
 }
 
 fn default_notification_threshold() -> u8 {
-    10
+    20
 }
 fn default_battery_interval_secs() -> u64 {
     60
@@ -153,7 +149,7 @@ mod tests {
         assert_eq!(s.lod, 1);
         assert_eq!(s.debounce_ms, 2);
         assert!(!s.angle_snap);
-        assert_eq!(s.notification_threshold, 10);
+        assert_eq!(s.notification_threshold, 20);
         assert_eq!(s.battery_interval_secs, 60);
     }
 
