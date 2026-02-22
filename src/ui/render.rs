@@ -1,7 +1,7 @@
 use ratatui::{prelude::*, widgets::*};
 use throbber_widgets_tui::{Throbber, WhichUse, BRAILLE_SIX_DOUBLE};
 
-use super::app::{lod_label, App, DPI_VALUES};
+use super::app::{lod_label, App, DPI_VALUES, SETTINGS_ROWS};
 use crate::device::protocol::MouseStatus;
 
 pub fn ui(frame: &mut Frame, app: &mut App) {
@@ -63,31 +63,63 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
 fn render_settings(frame: &mut Frame, app: &App, area: Rect) {
     let s = &app.settings;
 
-    let rows: Vec<ListItem> = vec![
-        setting_item(
-            0,
-            app.settings_row,
-            "DPI",
-            format!("{}", DPI_VALUES[app.dpi_stage]),
-        ),
-        setting_item(
-            1,
-            app.settings_row,
-            "Polling Rate",
-            format!("{} Hz", s.polling_rate().as_hz()),
-        ),
-        setting_item(2, app.settings_row, "Lift-Off Distance", lod_label(s.lod())),
-        setting_item(
-            3,
-            app.settings_row,
-            "Debounce",
-            format!("{} ms", s.debounce_ms),
-        ),
-        setting_toggle(4, app.settings_row, "Angle Snap", s.angle_snap),
-        setting_toggle(5, app.settings_row, "Ripple Control", s.ripple_control),
-        setting_toggle(6, app.settings_row, "Motion Sync", s.motion_sync),
-        setting_toggle(7, app.settings_row, "Turbo Mode", s.turbo_mode),
-    ];
+    // Index is derived from position in SETTINGS_ROWS so adding/removing rows
+    // here and in app.rs stays in sync without manual renumbering.
+    use super::app::SettingRow;
+    let rows: Vec<ListItem> = SETTINGS_ROWS
+        .iter()
+        .enumerate()
+        .map(|(idx, row)| match row {
+            SettingRow::Dpi => setting_item(
+                idx,
+                app.settings_row,
+                "DPI",
+                format!("{}", DPI_VALUES[app.dpi_stage]),
+            ),
+            SettingRow::PollingRate => setting_item(
+                idx,
+                app.settings_row,
+                "Polling Rate",
+                format!("{} Hz", s.polling_rate().as_hz()),
+            ),
+            SettingRow::LiftOffDistance => setting_item(
+                idx,
+                app.settings_row,
+                "Lift-Off Distance",
+                lod_label(s.lod()),
+            ),
+            SettingRow::Debounce => setting_item(
+                idx,
+                app.settings_row,
+                "Debounce",
+                format!("{} ms", s.debounce_ms),
+            ),
+            SettingRow::AngleSnap => {
+                setting_toggle(idx, app.settings_row, "Angle Snap", s.angle_snap)
+            }
+            SettingRow::RippleControl => {
+                setting_toggle(idx, app.settings_row, "Ripple Control", s.ripple_control)
+            }
+            SettingRow::MotionSync => {
+                setting_toggle(idx, app.settings_row, "Motion Sync", s.motion_sync)
+            }
+            SettingRow::TurboMode => {
+                setting_toggle(idx, app.settings_row, "Turbo Mode", s.turbo_mode)
+            }
+            SettingRow::NotificationThreshold => setting_item(
+                idx,
+                app.settings_row,
+                "Alert Threshold",
+                format!("{}%", s.notification_threshold),
+            ),
+            SettingRow::BatteryInterval => setting_item(
+                idx,
+                app.settings_row,
+                "Battery Interval",
+                interval_label(s.battery_interval_secs),
+            ),
+        })
+        .collect();
 
     frame.render_widget(
         List::new(rows).block(
@@ -302,5 +334,14 @@ fn battery_color(level: u8) -> Color {
         Color::Yellow
     } else {
         Color::Green
+    }
+}
+
+/// Format a battery interval in seconds as a human-readable string.
+fn interval_label(secs: u64) -> String {
+    match secs {
+        s if s < 60 => format!("{}s", s),
+        s if s % 60 == 0 => format!("{}m", s / 60),
+        s => format!("{}m {}s", s / 60, s % 60),
     }
 }
