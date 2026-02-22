@@ -22,7 +22,7 @@ use crate::device::{
     transport::Device,
     worker::BatteryWorker,
 };
-use crate::settings::Settings;
+use crate::settings::{Settings, INTERVAL_OPTIONS};
 
 pub const DPI_VALUES: [u16; 6] = [400, 800, 1600, 3200, 6400, 12800];
 
@@ -43,7 +43,6 @@ pub const LOD_OPTIONS: [LiftOffDistance; 3] = [
 ];
 
 const STATUS_MSG_TTL: Duration = Duration::from_secs(3);
-const BATTERY_POLL_INTERVAL_SECS: u64 = 60;
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum SettingRow {
@@ -55,9 +54,11 @@ pub enum SettingRow {
     RippleControl,
     MotionSync,
     TurboMode,
+    NotificationThreshold,
+    BatteryInterval,
 }
 
-pub const SETTINGS_ROWS: [SettingRow; 8] = [
+pub const SETTINGS_ROWS: [SettingRow; 10] = [
     SettingRow::Dpi,
     SettingRow::PollingRate,
     SettingRow::LiftOffDistance,
@@ -66,24 +67,17 @@ pub const SETTINGS_ROWS: [SettingRow; 8] = [
     SettingRow::RippleControl,
     SettingRow::MotionSync,
     SettingRow::TurboMode,
+    SettingRow::NotificationThreshold,
+    SettingRow::BatteryInterval,
 ];
 
 pub struct App {
-    // Shared, mutex-guarded device handle.
-    //
-    // The same Arc is given to BatteryWorker so all HID access goes through
-    // one file descriptor, serialized by the lock. None when not connected.
     pub device: Option<Arc<Mutex<Device>>>,
-
-    // Cached at startup, these never change while the TUI is running and
-    // must not require a lock acquisition inside the render loop.
     pub device_path: String,
     pub device_wired: bool,
 
     pub settings: Settings,
     pub battery: Option<protocol::MouseStatus>,
-    // True until the worker delivers its first battery reading.
-    // Starts false when there is no device (no point showing a spinner).
     pub battery_loading: bool,
     pub firmware: Option<String>,
 
@@ -93,7 +87,6 @@ pub struct App {
     pub status_msg: Option<(String, bool, Instant)>,
     pub should_quit: bool,
 
-    // Throbber animation state, advanced each tick while battery_loading is true.
     pub throbber_state: ThrobberState,
 
     _worker: Option<BatteryWorker>,
@@ -104,9 +97,6 @@ impl App {
     pub fn new() -> Self {
         let settings = Settings::load();
 
-        // Open once, wrap in Arc<Mutex> so BatteryWorker can share the same
-        // handle rather than opening its own. Cache display-only fields so
-        // the render loop never needs to acquire the lock.
         let (device, device_path, device_wired, firmware, dpi_stage) = match Device::open() {
             Ok(dev) => {
                 let path = dev.path().display().to_string();
@@ -127,17 +117,14 @@ impl App {
             Err(_) => (None, String::new(), false, None, 2),
         };
 
-        // Apply stored settings before spawning the worker.
-        // We have exclusive access here, no other thread exists yet,
-        // so the worker's first battery poll cannot race with these writes.
         if let Some(ref dev_arc) = device {
             let dev = dev_arc.lock().unwrap();
             apply_settings_to_device(&dev, &settings);
         }
 
-        // Worker gets a clone of the same Arc, no second Device::open().
         let battery_loading = device.is_some();
-        let (worker, battery_rx) = BatteryWorker::spawn(BATTERY_POLL_INTERVAL_SECS, device.clone());
+        let interval = settings.battery_interval_secs;
+        let (worker, battery_rx) = BatteryWorker::spawn(interval, device.clone());
 
         Self {
             device,
@@ -213,24 +200,10 @@ impl App {
         }
     }
 
-    // Acquire the device lock non-blocking and call "f" with a reference.
-    //
-    // Returns false (and sets a status message) if:
-    // * No device was found at startup.
-    // * The worker holds the lock (battery poll in progress).
-    //
-    // try_lock means a user action always loses to an in-progress battery
-    // poll rather than blocking the UI thread for up to ~2 seconds.
     fn with_device<F>(&mut self, f: F) -> bool
     where
         F: FnOnce(&Device),
     {
-        // Clone the Arc before any lock or status call.
-        //
-        // "match &self.device" would borrow "self" for the entire match block,
-        // including through the MutexGuard's Drop, making "self.set_status()"
-        // impossible. Cloning the Arc ends the immutable borrow immediately,
-        // leaving "self" free for mutable use below.
         let Some(dev_arc) = self.device.clone() else {
             self.set_status("No device", true);
             return false;
@@ -242,7 +215,7 @@ impl App {
                 true
             }
             Err(_) => {
-                self.set_status("Device busy — try again", true);
+                self.set_status("Device busy, try again", true);
                 false
             }
         }
@@ -337,6 +310,33 @@ impl App {
                 });
                 self.set_status(format!("Turbo → {}", on_off(v)), false);
             }
+            SettingRow::NotificationThreshold => {
+                if delta == 0 {
+                    return;
+                }
+                let step: i32 = 5;
+                let new =
+                    (self.settings.notification_threshold as i32 + delta * step).clamp(5, 50) as u8;
+                self.settings.notification_threshold = new;
+                self.set_status(format!("Alert threshold → {}%", new), false);
+            }
+            SettingRow::BatteryInterval => {
+                if delta == 0 {
+                    return;
+                }
+                let idx = INTERVAL_OPTIONS
+                    .iter()
+                    .position(|&s| s == self.settings.battery_interval_secs)
+                    .unwrap_or(1);
+                let new = (idx as i32 + delta).clamp(0, INTERVAL_OPTIONS.len() as i32 - 1) as usize;
+                self.settings.battery_interval_secs = INTERVAL_OPTIONS[new];
+                self.set_status(
+                    format!("Battery interval → {}s", INTERVAL_OPTIONS[new]),
+                    false,
+                );
+                // Note: the running worker uses the interval captured at spawn time.
+                // The new value takes effect on the next TUI or tray session.
+            }
         }
     }
 }
@@ -349,8 +349,6 @@ impl Drop for App {
     }
 }
 
-// Apply all stored settings to an already-open device reference.
-// Called once at startup with exclusive access before the worker is spawned.
 fn apply_settings_to_device(dev: &Device, settings: &Settings) {
     let _ = protocol::set_polling_rate(dev, settings.polling_rate());
     let _ = protocol::set_lod(dev, settings.lod());
