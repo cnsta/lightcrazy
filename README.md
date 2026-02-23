@@ -13,7 +13,7 @@ release it on the off-chance that someone else finds it useful!
 - Debounce time: 0 – 20 ms
 - Toggle: Angle Snap, Ripple Control, Motion Sync, Turbo Mode
 - Battery level and charging status via system tray
-- Low-battery desktop notifications (configurable threshold)
+- Low-battery desktop notifications (configurable threshold & alarm)
 - Terminal UI for settings (`--options`)
 
 ## Installation
@@ -83,8 +83,8 @@ have been thoroughly tested. Feel free to open an issue if you encounter bugs.
 with AppIndicator extension, most others). Check
 `journalctl --user -u lightcrazy`.
 
-**Settings panel opens in wrong terminal**: set `TERMINAL` in your environment,
-or use the `service.terminal` NixOS option.
+**Settings panel opens in wrong terminal**: set `TERMINAL` or `TERM` in your
+environment.
 
 ## Credits
 
