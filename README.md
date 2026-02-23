@@ -93,6 +93,6 @@ environment.
 - [NotAShelf/tailray](https://github.com/NotAShelf/tailray) - tray architecture
   reference
 
-  ## Disclaimer
+## Disclaimer
 
-  This project is not affiliated with Pulsar Gaming Gears or AplusX Inc.
+This project is not affiliated with Pulsar Gaming Gears or AplusX Inc.
