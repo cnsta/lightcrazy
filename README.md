@@ -92,3 +92,7 @@ environment.
   protocol reverse engineering and battery command sequences
 - [NotAShelf/tailray](https://github.com/NotAShelf/tailray) - tray architecture
   reference
+
+  ## Disclaimer
+
+  This project is not affiliated with Pulsar Gaming Gears or AplusX Inc.
