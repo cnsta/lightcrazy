@@ -26,6 +26,7 @@ throbber-widgets-tui = "0.10"
 
 # Tray
 ksni = { version = "0.3", features = ["blocking"] }
+zbus = { version = "5", features = ["blocking"] }
 notify-rust = { version = "4.11", default-features = false, features = ["d"] }
 ctrlc = "3.5"
 

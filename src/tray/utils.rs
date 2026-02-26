@@ -15,19 +15,8 @@ use crate::tray::menu::{BatteryContext, BatteryTray};
 
 static NEEDS_RESPAWN: AtomicBool = AtomicBool::new(false);
 
-/// Set by `watcher_online` in menu.rs each time ksni confirms the tray is
-/// registered with the StatusNotifierWatcher. The watchdog uses this to detect
-/// the boot-race case where `spawn()` succeeded but the watcher wasn't ready
-/// yet, meaning `watcher_online` is never called and `watcher_offline` never
-/// fires, leaving the tray silently unregistered with no other signal to act on.
-static WATCHER_ONLINE: AtomicBool = AtomicBool::new(false);
-
 pub fn signal_respawn_needed() {
     NEEDS_RESPAWN.store(true, Ordering::Release);
-}
-
-pub fn signal_watcher_online() {
-    WATCHER_ONLINE.store(true, Ordering::Release);
 }
 
 pub struct TrayServiceHandle {
@@ -79,10 +68,66 @@ pub fn start_tray_service() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Block until `org.kde.StatusNotifierWatcher` is present on the session bus,
+/// or until `timeout` elapses. Called before every `spawn()` so that
+/// `RegisterStatusNotifierItem` is never sent before anything is listening.
+///
+/// Without this, apps that start before the bar's SNI watcher is ready send
+/// their registration into the void: the call returns no error but the watcher
+/// never records the item, `watcher_offline` is never called (we were never
+/// online to begin with), and the icon silently doesn't appear.
+///
+/// Note: ksni's `watcher_online` callback only fires when the watcher comes
+/// back *after* being offline, it does not fire on a clean first registration
+/// where the watcher was already running, so it cannot be used to detect this
+/// race after the fact.
+fn wait_for_watcher(timeout: Duration) {
+    use zbus::blocking::Connection;
+
+    let Ok(conn) = Connection::session() else {
+        warn!("Could not connect to session D-Bus; proceeding without watcher check");
+        return;
+    };
+    let Ok(dbus) = zbus::blocking::fdo::DBusProxy::new(&conn) else {
+        warn!("Could not create DBus proxy; proceeding without watcher check");
+        return;
+    };
+
+    let start = Instant::now();
+    loop {
+        match dbus.list_names() {
+            Ok(names)
+                if names
+                    .iter()
+                    .any(|n| n.as_str() == "org.kde.StatusNotifierWatcher") =>
+            {
+                info!("StatusNotifierWatcher is available");
+                return;
+            }
+            Ok(_) => {}
+            Err(e) => warn!("D-Bus list_names failed: {}", e),
+        }
+        if start.elapsed() >= timeout {
+            warn!(
+                "StatusNotifierWatcher not available after {}s — proceeding anyway;                  watcher_offline/respawn will handle it if the tray does not register",
+                timeout.as_secs()
+            );
+            return;
+        }
+        thread::sleep(Duration::from_millis(500));
+    }
+}
+
 fn init_tray() -> anyhow::Result<(
     Arc<Mutex<BatteryContext>>,
     ksni::blocking::Handle<BatteryTray>,
 )> {
+    // Wait for the SNI watcher before spawning so RegisterStatusNotifierItem
+    // is never issued before anything is listening. The wait returns immediately
+    // if the watcher is already up (the common case), so there is no cost on a
+    // healthy boot. 30s covers even very slow graphical-session startups.
+    wait_for_watcher(Duration::from_secs(30));
+
     let ctx = Arc::new(Mutex::new(BatteryContext::default()));
 
     // No blocking read here, the device/dongle is often not ready at
@@ -180,43 +225,19 @@ fn start_tray_watchdog(
     running: Arc<AtomicBool>,
     initial_handle: ksni::blocking::Handle<BatteryTray>,
 ) {
-    // How long to wait before concluding the watcher never registered us.
-    // Long enough to cover slow graphical-session startups without being
-    // so short that a legitimate slow boot triggers a false respawn.
-    const BOOT_RACE_GRACE_SECS: u64 = 20;
-
     thread::spawn(move || {
         let mut consecutive_failures = 0u32;
         let mut handle = Some(initial_handle);
-        // Tracks when the current handle was spawned. Reset on every respawn so
-        // the grace-period check is always relative to the *current* handle, not
-        // the process start time. The original `started_at` was captured once,
-        // meaning every watchdog loop after the first respawn already had
-        // elapsed() > BOOT_RACE_GRACE_SECS and triggered infinitely.
-        let mut last_spawned_at = Instant::now();
 
         while running.load(Ordering::Acquire) {
-            // Boot-race detection: if the grace period has elapsed since this
-            // handle was spawned and watcher_online has still not fired,
-            // RegisterStatusNotifierItem was lost (watcher wasn't up yet).
-            // Trigger a fresh spawn to re-register cleanly.
-            if handle.is_some()
-                && !WATCHER_ONLINE.load(Ordering::Acquire)
-                && last_spawned_at.elapsed().as_secs() > BOOT_RACE_GRACE_SECS
-            {
-                info!(
-                    "watcher_online not seen within {}s of last spawn — \
-                     likely boot-race, triggering respawn",
-                    BOOT_RACE_GRACE_SECS
-                );
-                NEEDS_RESPAWN.store(true, Ordering::Release);
-            }
-
             if NEEDS_RESPAWN.load(Ordering::Acquire) || handle.is_none() {
                 info!("Tray disconnected, attempting respawn...");
                 NEEDS_RESPAWN.store(false, Ordering::Release);
-                // Reset so the grace-period check applies fresh to the new handle.
-                WATCHER_ONLINE.store(false, Ordering::Release);
+
+                // Wait for the watcher before re-registering. If the bar
+                // restarted and took its watcher down with it, spawning
+                // before it re-advertises drops the registration silently.
+                wait_for_watcher(Duration::from_secs(30));
 
                 let tray = BatteryTray { ctx: ctx.clone() };
                 match tray.spawn() {
@@ -224,7 +245,6 @@ fn start_tray_watchdog(
                         info!("Successfully respawned tray");
                         handle = Some(new_handle);
                         consecutive_failures = 0;
-                        last_spawned_at = Instant::now();
                     }
                     Err(e) => {
                         consecutive_failures += 1;
