@@ -42,7 +42,7 @@ impl Drop for TrayServiceHandle {
 }
 
 pub fn start_tray_background() -> anyhow::Result<TrayServiceHandle> {
-    info!("Starting Pulsar X2 tray in background");
+    info!("Starting lightcrazy tray in background");
 
     let (ctx, handle) = init_tray()?;
     let running = Arc::new(AtomicBool::new(true));
@@ -54,7 +54,7 @@ pub fn start_tray_background() -> anyhow::Result<TrayServiceHandle> {
 }
 
 pub fn start_tray_service() -> anyhow::Result<()> {
-    info!("Starting Pulsar X2 battery tray service");
+    info!("Starting lightcrazy battery tray service");
 
     let (ctx, handle) = init_tray()?;
     let running = Arc::new(AtomicBool::new(true));

@@ -281,8 +281,8 @@ impl Tray for BatteryTray {
     fn title(&self) -> String {
         let ctx = self.ctx.lock().unwrap();
         match ctx.battery {
-            Some((level, _)) => format!("Pulsar X2: {}%", level),
-            None => "Pulsar X2: reading...".to_string(),
+            Some((level, _)) => format!("Battery: {}%", level),
+            None => "Battery: reading...".to_string(),
         }
     }
 
@@ -290,10 +290,13 @@ impl Tray for BatteryTray {
         let ctx = self.ctx.lock().unwrap();
         let (title, description) = match ctx.battery {
             Some((level, charging)) => (
-                format!("Pulsar X2: {}%", level),
+                format!("Battery: {}%", level),
                 if charging { "Charging" } else { "Discharging" }.to_string(),
             ),
-            None => ("Pulsar X2".to_string(), "Reading battery...".to_string()),
+            None => (
+                "Pulsar X2 CrazyLight".to_string(),
+                "Reading battery...".to_string(),
+            ),
         };
         ToolTip {
             title,
