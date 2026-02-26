@@ -4,7 +4,7 @@ use std::{
         Arc, Mutex,
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::Context;
@@ -15,8 +15,19 @@ use crate::tray::menu::{BatteryContext, BatteryTray};
 
 static NEEDS_RESPAWN: AtomicBool = AtomicBool::new(false);
 
+/// Set by `watcher_online` in menu.rs each time ksni confirms the tray is
+/// registered with the StatusNotifierWatcher. The watchdog uses this to detect
+/// the boot-race case where `spawn()` succeeded but the watcher wasn't ready
+/// yet, meaning `watcher_online` is never called and `watcher_offline` never
+/// fires, leaving the tray silently unregistered with no other signal to act on.
+static WATCHER_ONLINE: AtomicBool = AtomicBool::new(false);
+
 pub fn signal_respawn_needed() {
     NEEDS_RESPAWN.store(true, Ordering::Release);
+}
+
+pub fn signal_watcher_online() {
+    WATCHER_ONLINE.store(true, Ordering::Release);
 }
 
 pub struct TrayServiceHandle {
@@ -169,14 +180,39 @@ fn start_tray_watchdog(
     running: Arc<AtomicBool>,
     initial_handle: ksni::blocking::Handle<BatteryTray>,
 ) {
+    // How long to wait before concluding the watcher never registered us.
+    // Long enough to cover slow graphical-session startups without being
+    // so short that a legitimate slow boot triggers a false respawn.
+    const BOOT_RACE_GRACE_SECS: u64 = 20;
+
     thread::spawn(move || {
         let mut consecutive_failures = 0u32;
         let mut handle = Some(initial_handle);
+        let started_at = Instant::now();
 
         while running.load(Ordering::Acquire) {
+            // Boot-race detection: if the grace period has elapsed and
+            // watcher_online has still never fired, the initial RegisterStatus-
+            // NotifierItem call was lost (watcher wasn't up yet, ksni's internal
+            // retry didn't fire, and watcher_offline was never called because we
+            // were never "on"). Trigger a fresh spawn to re-register cleanly.
+            if handle.is_some()
+                && !WATCHER_ONLINE.load(Ordering::Acquire)
+                && started_at.elapsed().as_secs() > BOOT_RACE_GRACE_SECS
+            {
+                info!(
+                    "watcher_online not seen within {}s of startup — \
+                     likely boot-race, triggering respawn",
+                    BOOT_RACE_GRACE_SECS
+                );
+                NEEDS_RESPAWN.store(true, Ordering::Release);
+            }
+
             if NEEDS_RESPAWN.load(Ordering::Acquire) || handle.is_none() {
                 info!("Tray disconnected, attempting respawn...");
                 NEEDS_RESPAWN.store(false, Ordering::Release);
+                // Reset so the grace-period check applies fresh to the new handle.
+                WATCHER_ONLINE.store(false, Ordering::Release);
 
                 let tray = BatteryTray { ctx: ctx.clone() };
                 match tray.spawn() {

@@ -356,6 +356,7 @@ impl Tray for BatteryTray {
 
     fn watcher_online(&self) {
         info!("Tray watcher online");
+        crate::tray::utils::signal_watcher_online();
     }
 
     fn watcher_offline(&self, reason: OfflineReason) -> bool {
