@@ -188,20 +188,24 @@ fn start_tray_watchdog(
     thread::spawn(move || {
         let mut consecutive_failures = 0u32;
         let mut handle = Some(initial_handle);
-        let started_at = Instant::now();
+        // Tracks when the current handle was spawned. Reset on every respawn so
+        // the grace-period check is always relative to the *current* handle, not
+        // the process start time. The original `started_at` was captured once,
+        // meaning every watchdog loop after the first respawn already had
+        // elapsed() > BOOT_RACE_GRACE_SECS and triggered infinitely.
+        let mut last_spawned_at = Instant::now();
 
         while running.load(Ordering::Acquire) {
-            // Boot-race detection: if the grace period has elapsed and
-            // watcher_online has still never fired, the initial RegisterStatus-
-            // NotifierItem call was lost (watcher wasn't up yet, ksni's internal
-            // retry didn't fire, and watcher_offline was never called because we
-            // were never "on"). Trigger a fresh spawn to re-register cleanly.
+            // Boot-race detection: if the grace period has elapsed since this
+            // handle was spawned and watcher_online has still not fired,
+            // RegisterStatusNotifierItem was lost (watcher wasn't up yet).
+            // Trigger a fresh spawn to re-register cleanly.
             if handle.is_some()
                 && !WATCHER_ONLINE.load(Ordering::Acquire)
-                && started_at.elapsed().as_secs() > BOOT_RACE_GRACE_SECS
+                && last_spawned_at.elapsed().as_secs() > BOOT_RACE_GRACE_SECS
             {
                 info!(
-                    "watcher_online not seen within {}s of startup — \
+                    "watcher_online not seen within {}s of last spawn — \
                      likely boot-race, triggering respawn",
                     BOOT_RACE_GRACE_SECS
                 );
@@ -220,6 +224,7 @@ fn start_tray_watchdog(
                         info!("Successfully respawned tray");
                         handle = Some(new_handle);
                         consecutive_failures = 0;
+                        last_spawned_at = Instant::now();
                     }
                     Err(e) => {
                         consecutive_failures += 1;
