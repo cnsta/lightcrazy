@@ -16,6 +16,7 @@ use crossterm::{
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
 use throbber_widgets_tui::ThrobberState;
+use tui_slider::SliderState;
 
 use crate::device::{
     protocol::{self, LiftOffDistance, PollingRate},
@@ -24,6 +25,8 @@ use crate::device::{
 };
 use crate::settings::{Settings, INTERVAL_OPTIONS};
 
+/// The six DPI presets. The slider uses the *index* (0–5) so all steps are
+/// equal width on screen regardless of the numeric gaps between values.
 pub const DPI_VALUES: [u16; 6] = [400, 800, 1600, 3200, 6400, 12800];
 
 pub const POLLING_RATES: [PollingRate; 7] = [
@@ -61,8 +64,8 @@ pub enum SettingRow {
 pub const SETTINGS_ROWS: [SettingRow; 10] = [
     SettingRow::Dpi,
     SettingRow::PollingRate,
-    SettingRow::LiftOffDistance,
     SettingRow::Debounce,
+    SettingRow::LiftOffDistance,
     SettingRow::AngleSnap,
     SettingRow::RippleControl,
     SettingRow::MotionSync,
@@ -81,12 +84,20 @@ pub struct App {
     pub battery_loading: bool,
     pub firmware: Option<String>,
 
-    pub dpi_stage: usize,
-    pub settings_row: usize,
+    /// Last DPI value confirmed on the device (set at startup via firmware query).
+    pub dpi: u16,
+    /// Index into DPI_VALUES (0–5). Equal spacing on screen. Pending until Enter.
+    pub dpi_slider: SliderState,
 
+    /// Index into POLLING_RATES (0–6). Equal spacing on screen. Pending until Enter.
+    pub polling_slider: SliderState,
+
+    /// Debounce, 0–20 ms. Already linear so the slider value IS the ms value. Pending until Enter.
+    pub debounce_slider: SliderState,
+
+    pub settings_row: usize,
     pub status_msg: Option<(String, bool, Instant)>,
     pub should_quit: bool,
-
     pub throbber_state: ThrobberState,
 
     _worker: Option<BatteryWorker>,
@@ -97,24 +108,15 @@ impl App {
     pub fn new() -> Self {
         let settings = Settings::load();
 
-        let (device, device_path, device_wired, firmware, dpi_stage) = match Device::open() {
+        let (device, device_path, device_wired, firmware, dpi) = match Device::open() {
             Ok(dev) => {
                 let path = dev.path().display().to_string();
                 let wired = dev.is_wired();
                 let firmware = protocol::get_firmware(&dev).ok();
-                let dpi_stage = protocol::query_current_dpi(&dev)
-                    .ok()
-                    .and_then(|dpi| DPI_VALUES.iter().position(|&d| d == dpi))
-                    .unwrap_or(2);
-                (
-                    Some(Arc::new(Mutex::new(dev))),
-                    path,
-                    wired,
-                    firmware,
-                    dpi_stage,
-                )
+                let dpi = protocol::query_current_dpi(&dev).unwrap_or(1600);
+                (Some(Arc::new(Mutex::new(dev))), path, wired, firmware, dpi)
             }
-            Err(_) => (None, String::new(), false, None, 2),
+            Err(_) => (None, String::new(), false, None, 1600u16),
         };
 
         if let Some(ref dev_arc) = device {
@@ -126,6 +128,17 @@ impl App {
         let interval = settings.battery_interval_secs;
         let (worker, battery_rx) = BatteryWorker::spawn(interval, device.clone());
 
+        let dpi_idx = DPI_VALUES.iter().position(|&d| d == dpi).unwrap_or(2);
+        let polling_idx = POLLING_RATES
+            .iter()
+            .position(|&r| r == settings.polling_rate())
+            .unwrap_or(3);
+
+        let dpi_slider = SliderState::new(dpi_idx as f64, 0.0, (DPI_VALUES.len() - 1) as f64);
+        let polling_slider =
+            SliderState::new(polling_idx as f64, 0.0, (POLLING_RATES.len() - 1) as f64);
+        let debounce_slider = SliderState::new(settings.debounce_ms as f64, 0.0, 20.0);
+
         Self {
             device,
             device_path,
@@ -134,7 +147,10 @@ impl App {
             battery: None,
             battery_loading,
             firmware,
-            dpi_stage,
+            dpi,
+            dpi_slider,
+            polling_slider,
+            debounce_slider,
             settings_row: 0,
             status_msg: None,
             should_quit: false,
@@ -155,11 +171,9 @@ impl App {
                 self.battery_loading = false;
             }
         }
-
         if self.battery_loading {
             self.throbber_state.calc_next();
         }
-
         if let Some((_, _, shown_at)) = &self.status_msg {
             if shown_at.elapsed() >= STATUS_MSG_TTL {
                 self.status_msg = None;
@@ -208,14 +222,13 @@ impl App {
             self.set_status("No device", true);
             return false;
         };
-
         match dev_arc.try_lock() {
             Ok(dev) => {
                 f(&dev);
                 true
             }
             Err(_) => {
-                self.set_status("Device busy, try again", true);
+                self.set_status("Device busy — try again", true);
                 false
             }
         }
@@ -225,7 +238,8 @@ impl App {
         match SETTINGS_ROWS[self.settings_row] {
             SettingRow::Dpi => {
                 if delta == 0 {
-                    let dpi = DPI_VALUES[self.dpi_stage];
+                    let idx = self.dpi_slider.value().round() as usize;
+                    let dpi = DPI_VALUES[idx.min(DPI_VALUES.len() - 1)];
                     let mut ok = false;
                     let mut err_msg = String::new();
                     self.with_device(|dev| match protocol::set_dpi(dev, dpi) {
@@ -233,31 +247,62 @@ impl App {
                         Err(e) => err_msg = e.to_string(),
                     });
                     if ok {
+                        self.dpi = dpi;
                         self.set_status(format!("DPI → {}", dpi), false);
                     } else if !err_msg.is_empty() {
+                        let confirmed_idx =
+                            DPI_VALUES.iter().position(|&d| d == self.dpi).unwrap_or(2);
+                        self.dpi_slider.set_value(confirmed_idx as f64);
                         self.set_status(format!("Error: {}", err_msg), true);
                     }
-                } else if delta < 0 {
-                    self.dpi_stage = self.dpi_stage.saturating_sub(1);
                 } else {
-                    self.dpi_stage = (self.dpi_stage + 1).min(DPI_VALUES.len() - 1);
+                    if delta < 0 {
+                        self.dpi_slider.decrease(1.0);
+                    } else {
+                        self.dpi_slider.increase(1.0);
+                    }
+                    let idx = self.dpi_slider.value().round() as usize;
+                    let pending = DPI_VALUES[idx.min(DPI_VALUES.len() - 1)];
+                    self.set_status(format!("DPI {} — press Enter to apply", pending), false);
                 }
             }
+
             SettingRow::PollingRate => {
-                let idx = POLLING_RATES
-                    .iter()
-                    .position(|&r| r == self.settings.polling_rate())
-                    .unwrap_or(3);
-                let new = (idx as i32 + delta).clamp(0, POLLING_RATES.len() as i32 - 1) as usize;
-                self.settings.set_polling_rate(POLLING_RATES[new]);
-                self.with_device(|dev| {
-                    let _ = protocol::set_polling_rate(dev, POLLING_RATES[new]);
-                });
-                self.set_status(
-                    format!("Polling → {} Hz", POLLING_RATES[new].as_hz()),
-                    false,
-                );
+                if delta == 0 {
+                    let idx = self.polling_slider.value().round() as usize;
+                    let rate = POLLING_RATES[idx.min(POLLING_RATES.len() - 1)];
+                    let mut ok = false;
+                    let mut err_msg = String::new();
+                    self.with_device(|dev| match protocol::set_polling_rate(dev, rate) {
+                        Ok(()) => ok = true,
+                        Err(e) => err_msg = e.to_string(),
+                    });
+                    if ok {
+                        self.settings.set_polling_rate(rate);
+                        self.set_status(format!("Polling → {} Hz", rate.as_hz()), false);
+                    } else if !err_msg.is_empty() {
+                        let confirmed_idx = POLLING_RATES
+                            .iter()
+                            .position(|&r| r == self.settings.polling_rate())
+                            .unwrap_or(3);
+                        self.polling_slider.set_value(confirmed_idx as f64);
+                        self.set_status(format!("Error: {}", err_msg), true);
+                    }
+                } else {
+                    if delta < 0 {
+                        self.polling_slider.decrease(1.0);
+                    } else {
+                        self.polling_slider.increase(1.0);
+                    }
+                    let idx = self.polling_slider.value().round() as usize;
+                    let pending = POLLING_RATES[idx.min(POLLING_RATES.len() - 1)];
+                    self.set_status(
+                        format!("Polling {} Hz — press Enter to apply", pending.as_hz()),
+                        false,
+                    );
+                }
             }
+
             SettingRow::LiftOffDistance => {
                 let idx = LOD_OPTIONS
                     .iter()
@@ -270,14 +315,38 @@ impl App {
                 });
                 self.set_status(format!("LOD → {}", lod_label(LOD_OPTIONS[new])), false);
             }
+
             SettingRow::Debounce => {
-                let new = (self.settings.debounce_ms as i32 + delta).clamp(0, 20) as u8;
-                self.settings.debounce_ms = new;
-                self.with_device(|dev| {
-                    let _ = protocol::set_debounce(dev, new);
-                });
-                self.set_status(format!("Debounce → {}ms", new), false);
+                if delta == 0 {
+                    let val = self.debounce_slider.value().round() as u8;
+                    let mut ok = false;
+                    let mut err_msg = String::new();
+                    self.with_device(|dev| match protocol::set_debounce(dev, val) {
+                        Ok(()) => ok = true,
+                        Err(e) => err_msg = e.to_string(),
+                    });
+                    if ok {
+                        self.settings.debounce_ms = val;
+                        self.set_status(format!("Debounce → {} ms", val), false);
+                    } else if !err_msg.is_empty() {
+                        self.debounce_slider
+                            .set_value(self.settings.debounce_ms as f64);
+                        self.set_status(format!("Error: {}", err_msg), true);
+                    }
+                } else {
+                    if delta < 0 {
+                        self.debounce_slider.decrease(1.0);
+                    } else {
+                        self.debounce_slider.increase(1.0);
+                    }
+                    let pending = self.debounce_slider.value().round() as u8;
+                    self.set_status(
+                        format!("Debounce {} ms — press Enter to apply", pending),
+                        false,
+                    );
+                }
             }
+
             SettingRow::AngleSnap => {
                 self.settings.angle_snap = !self.settings.angle_snap;
                 let v = self.settings.angle_snap;
@@ -314,9 +383,8 @@ impl App {
                 if delta == 0 {
                     return;
                 }
-                let step: i32 = 5;
                 let new =
-                    (self.settings.notification_threshold as i32 + delta * step).clamp(5, 50) as u8;
+                    (self.settings.notification_threshold as i32 + delta * 5).clamp(5, 50) as u8;
                 self.settings.notification_threshold = new;
                 self.set_status(format!("Alert threshold → {}%", new), false);
             }
@@ -334,8 +402,6 @@ impl App {
                     format!("Battery interval → {}s", INTERVAL_OPTIONS[new]),
                     false,
                 );
-                // Note: the running worker uses the interval captured at spawn time.
-                // The new value takes effect on the next TUI or tray session.
             }
         }
     }
@@ -369,9 +435,9 @@ pub fn on_off(v: bool) -> &'static str {
 
 pub fn lod_label(lod: LiftOffDistance) -> String {
     match lod {
-        LiftOffDistance::Low => "Low (0.7mm)".into(),
-        LiftOffDistance::Medium => "Medium (1mm)".into(),
-        LiftOffDistance::High => "High (2mm)".into(),
+        LiftOffDistance::Low => "0.7 mm".into(),
+        LiftOffDistance::Medium => "1 mm".into(),
+        LiftOffDistance::High => "2 mm".into(),
     }
 }
 
@@ -379,7 +445,6 @@ pub fn run() -> Result<()> {
     use std::io::Write;
 
     enable_raw_mode()?;
-
     let mut stdout = io::stdout();
     stdout.flush()?;
 
@@ -418,7 +483,6 @@ pub fn run() -> Result<()> {
             }
 
             app.tick();
-
             if app.should_quit {
                 break;
             }

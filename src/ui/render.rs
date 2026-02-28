@@ -1,16 +1,17 @@
 use ratatui::{prelude::*, widgets::*};
 use throbber_widgets_tui::{Throbber, WhichUse, BRAILLE_SIX_DOUBLE};
+use tui_slider::{Slider, SliderState};
 
-use super::app::{lod_label, App, DPI_VALUES, SETTINGS_ROWS};
+use super::app::{lod_label, App, SettingRow, DPI_VALUES, POLLING_RATES, SETTINGS_ROWS};
 use crate::device::protocol::MouseStatus;
 
 pub fn ui(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
 
     let root = Layout::vertical([
-        Constraint::Length(3), // header
-        Constraint::Min(0),    // content
-        Constraint::Length(1), // footer
+        Constraint::Length(3),
+        Constraint::Min(0),
+        Constraint::Length(1),
     ])
     .split(area);
 
@@ -25,7 +26,6 @@ pub fn ui(frame: &mut Frame, app: &mut App) {
 }
 
 fn render_header(frame: &mut Frame, app: &App, area: Rect) {
-    // Use the cached fields, no mutex lock in the render loop.
     let (conn, path) = if app.device.is_some() {
         (
             if app.device_wired {
@@ -38,9 +38,7 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
     } else {
         ("not connected", "")
     };
-
     let fw = app.firmware.as_deref().unwrap_or("—");
-
     let line = Line::from(vec![
         Span::styled("LIGHTCRAZY", Style::new().bold()),
         Span::raw("   "),
@@ -52,7 +50,6 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
         },
         Span::styled(format!("   fw {}", fw), Style::new().fg(Color::DarkGray)),
     ]);
-
     frame.render_widget(
         Paragraph::new(line)
             .block(Block::bordered().border_style(Style::new().fg(Color::DarkGray))),
@@ -60,120 +57,229 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
     );
 }
 
+/// Slider rows occupy 2 lines: label+value on top, bar on bottom.
+fn row_height(row: &SettingRow) -> u16 {
+    match row {
+        SettingRow::Dpi | SettingRow::PollingRate | SettingRow::Debounce => 2,
+        _ => 1,
+    }
+}
+
 fn render_settings(frame: &mut Frame, app: &App, area: Rect) {
+    let block = Block::bordered()
+        .title(" Settings ")
+        .border_style(Style::new().fg(Color::DarkGray));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let constraints: Vec<Constraint> = SETTINGS_ROWS
+        .iter()
+        .map(|r| Constraint::Length(row_height(r)))
+        .collect();
+    let row_rects = Layout::vertical(constraints).split(inner);
     let s = &app.settings;
 
-    // Index is derived from position in SETTINGS_ROWS so adding/removing rows
-    // here and in app.rs stays in sync without manual renumbering.
-    use super::app::SettingRow;
-    let rows: Vec<ListItem> = SETTINGS_ROWS
-        .iter()
-        .enumerate()
-        .map(|(idx, row)| match row {
-            SettingRow::Dpi => setting_item(
-                idx,
-                app.settings_row,
-                "DPI",
-                format!("{}", DPI_VALUES[app.dpi_stage]),
-            ),
-            SettingRow::PollingRate => setting_item(
-                idx,
-                app.settings_row,
-                "Polling Rate",
-                format!("{} Hz", s.polling_rate().as_hz()),
-            ),
-            SettingRow::LiftOffDistance => setting_item(
-                idx,
-                app.settings_row,
+    for (i, row) in SETTINGS_ROWS.iter().enumerate() {
+        let rect = row_rects[i];
+        let selected = i == app.settings_row;
+        match row {
+            SettingRow::Dpi => {
+                let idx = app.dpi_slider.value().round() as usize;
+                let value = DPI_VALUES[idx.min(DPI_VALUES.len() - 1)];
+                render_slider_row(
+                    frame,
+                    rect,
+                    selected,
+                    "DPI",
+                    &format!("{}", value),
+                    &app.dpi_slider,
+                );
+            }
+            SettingRow::PollingRate => {
+                let idx = app.polling_slider.value().round() as usize;
+                let value = POLLING_RATES[idx.min(POLLING_RATES.len() - 1)];
+                render_slider_row(
+                    frame,
+                    rect,
+                    selected,
+                    "Polling Rate",
+                    &format!("{} Hz", value.as_hz()),
+                    &app.polling_slider,
+                );
+            }
+            SettingRow::LiftOffDistance => render_row(
+                frame,
+                rect,
+                selected,
                 "Lift-Off Distance",
                 lod_label(s.lod()),
             ),
-            SettingRow::Debounce => setting_item(
-                idx,
-                app.settings_row,
-                "Debounce",
-                format!("{} ms", s.debounce_ms),
-            ),
+            SettingRow::Debounce => {
+                let val = app.debounce_slider.value().round() as u8;
+                render_slider_row(
+                    frame,
+                    rect,
+                    selected,
+                    "Debounce",
+                    &format!("{} ms", val),
+                    &app.debounce_slider,
+                );
+            }
             SettingRow::AngleSnap => {
-                setting_toggle(idx, app.settings_row, "Angle Snap", s.angle_snap)
+                render_toggle(frame, rect, selected, "Angle Snap", s.angle_snap)
             }
             SettingRow::RippleControl => {
-                setting_toggle(idx, app.settings_row, "Ripple Control", s.ripple_control)
+                render_toggle(frame, rect, selected, "Ripple Control", s.ripple_control)
             }
             SettingRow::MotionSync => {
-                setting_toggle(idx, app.settings_row, "Motion Sync", s.motion_sync)
+                render_toggle(frame, rect, selected, "Motion Sync", s.motion_sync)
             }
             SettingRow::TurboMode => {
-                setting_toggle(idx, app.settings_row, "Turbo Mode", s.turbo_mode)
+                render_toggle(frame, rect, selected, "Turbo Mode", s.turbo_mode)
             }
-            SettingRow::NotificationThreshold => setting_item(
-                idx,
-                app.settings_row,
+            SettingRow::NotificationThreshold => render_row(
+                frame,
+                rect,
+                selected,
                 "Alert Threshold",
                 format!("{}%", s.notification_threshold),
             ),
-            SettingRow::BatteryInterval => setting_item(
-                idx,
-                app.settings_row,
+            SettingRow::BatteryInterval => render_row(
+                frame,
+                rect,
+                selected,
                 "Battery Interval",
                 interval_label(s.battery_interval_secs),
             ),
-        })
-        .collect();
+        }
+    }
+}
+
+/// Two-line slider row.
+///
+/// Top line: cursor glyph (left) + label + value flush-right.
+/// Bottom line: tui-slider bar aligned under the label text.
+///
+/// Selection is shown by a › cursor instead of a background colour.
+/// Inactive bars render in DarkGray; active bars: Cyan/DarkGray/White.
+fn render_slider_row(
+    frame: &mut Frame,
+    rect: Rect,
+    selected: bool,
+    label: &str,
+    value_str: &str,
+    state: &SliderState,
+) {
+    let [label_rect, bar_rect] =
+        Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas(rect);
+
+    let cursor = if selected { "›" } else { " " };
+    let label_text = format!(" {} {}", cursor, label);
+    let value_text = format!("{}  ", value_str);
+    let label_fg = if selected { Color::White } else { Color::Reset };
+    let value_fg = Color::Cyan;
+
+    let [ll, _, vr] = Layout::horizontal([
+        Constraint::Length(label_text.len() as u16),
+        Constraint::Min(0),
+        Constraint::Length(value_text.len() as u16),
+    ])
+    .areas(label_rect);
 
     frame.render_widget(
-        List::new(rows).block(
-            Block::bordered()
-                .title(" Settings ")
-                .border_style(Style::new().fg(Color::DarkGray)),
-        ),
-        area,
+        Paragraph::new(Span::styled(label_text, Style::new().fg(label_fg))),
+        ll,
+    );
+    frame.render_widget(
+        Paragraph::new(Span::styled(value_text, Style::new().fg(value_fg).bold())),
+        vr,
+    );
+
+    // Bar indented 3 chars to sit under the label text (past " › " prefix).
+    let bar_area = Rect {
+        x: bar_rect.x + 3,
+        width: bar_rect.width.saturating_sub(3),
+        ..bar_rect
+    };
+    let (fc, ec, hc) = if selected {
+        (Color::Cyan, Color::DarkGray, Color::White)
+    } else {
+        (Color::DarkGray, Color::DarkGray, Color::DarkGray)
+    };
+    frame.render_widget(
+        Slider::from_state(state)
+            .filled_symbol("━")
+            .empty_symbol("─")
+            .handle_symbol("●")
+            .filled_color(fc)
+            .empty_color(ec)
+            .handle_color(hc)
+            .show_value(false),
+        bar_area,
     );
 }
 
-fn setting_item(idx: usize, selected_idx: usize, label: &str, value: String) -> ListItem<'static> {
-    let selected = idx == selected_idx;
-    let (ls, vs) = if selected {
-        (
-            Style::new().fg(Color::Black).bg(Color::White),
-            Style::new().fg(Color::Black).bg(Color::White).bold(),
-        )
-    } else {
-        (Style::new(), Style::new().fg(Color::Cyan))
-    };
+fn render_row(frame: &mut Frame, rect: Rect, selected: bool, label: &str, value: String) {
+    let cursor = if selected { "›" } else { " " };
+    let label_text = format!(" {} {}", cursor, label);
+    let value_text = format!("{}  ", value);
+    let label_fg = if selected { Color::White } else { Color::Reset };
 
-    ListItem::new(Line::from(vec![
-        Span::styled(format!("  {:<20}", label), ls),
-        Span::styled(value, vs),
-    ]))
+    let [ll, _, vr] = Layout::horizontal([
+        Constraint::Length(label_text.len() as u16),
+        Constraint::Min(0),
+        Constraint::Length(value_text.len() as u16),
+    ])
+    .areas(rect);
+
+    frame.render_widget(
+        Paragraph::new(Span::styled(label_text, Style::new().fg(label_fg))),
+        ll,
+    );
+    frame.render_widget(
+        Paragraph::new(Span::styled(
+            value_text,
+            Style::new().fg(Color::Cyan).bold(),
+        )),
+        vr,
+    );
 }
 
-fn setting_toggle(
-    idx: usize,
-    selected_idx: usize,
+fn render_toggle(
+    frame: &mut Frame,
+    rect: Rect,
+    selected: bool,
     label: &'static str,
     checked: bool,
-) -> ListItem<'static> {
-    let selected = idx == selected_idx;
-    let checkbox = if checked { "☑ " } else { "☐ " };
-    let (ls, cs) = if selected {
-        (
-            Style::new().fg(Color::Black).bg(Color::White),
-            Style::new().fg(Color::Black).bg(Color::White).bold(),
-        )
-    } else {
-        (Style::new(), Style::new().fg(Color::Cyan))
-    };
+) {
+    let cursor = if selected { "›" } else { " " };
+    let label_text = format!(" {} {}", cursor, label);
+    // Checkbox + 2-char right margin to match value padding on other rows.
+    let check_text = if checked { "☑ " } else { "☐ " };
+    let label_fg = if selected { Color::White } else { Color::Reset };
 
-    ListItem::new(Line::from(vec![
-        Span::styled(format!("  {:<20}", label), ls),
-        Span::styled(checkbox, cs),
-    ]))
+    let [ll, _, vr] = Layout::horizontal([
+        Constraint::Length(label_text.len() as u16),
+        Constraint::Min(0),
+        Constraint::Length(check_text.len() as u16),
+    ])
+    .areas(rect);
+
+    frame.render_widget(
+        Paragraph::new(Span::styled(label_text, Style::new().fg(label_fg))),
+        ll,
+    );
+    frame.render_widget(
+        Paragraph::new(Span::styled(
+            check_text,
+            Style::new().fg(Color::Cyan).bold(),
+        )),
+        vr,
+    );
 }
 
 fn render_status(frame: &mut Frame, app: &mut App, area: Rect) {
     let mut lines: Vec<Line> = vec![Line::raw("")];
-
     if app.device.is_none() {
         lines.push(Line::from(Span::styled(
             "  No device found",
@@ -194,7 +300,6 @@ fn render_status(frame: &mut Frame, app: &mut App, area: Rect) {
         );
         return;
     }
-
     if app.battery_loading {
         render_battery_throbber(frame, app, area, &mut lines);
     } else {
@@ -211,7 +316,6 @@ fn render_status(frame: &mut Frame, app: &mut App, area: Rect) {
     }
 }
 
-// Shared helper: appends firmware, polling rate, and DPI lines.
 fn push_status_info(lines: &mut Vec<Line>, app: &App) {
     lines.push(Line::raw(""));
     if let Some(fw) = app.firmware.as_deref() {
@@ -221,13 +325,9 @@ fn push_status_info(lines: &mut Vec<Line>, app: &App) {
         "  Polling",
         format!("{} Hz", app.settings.polling_rate().as_hz()),
     ));
-    lines.push(kv(
-        "  Current DPI",
-        format!("{}", DPI_VALUES[app.dpi_stage]),
-    ));
+    lines.push(kv("  DPI", format!("{}", app.dpi)));
 }
 
-// Renders the status panel with a live throbber while battery is loading.
 fn render_battery_throbber(
     frame: &mut Frame,
     app: &mut App,
@@ -237,17 +337,14 @@ fn render_battery_throbber(
     let block = Block::bordered()
         .title(" Status ")
         .border_style(Style::new().fg(Color::DarkGray));
-
     let inner = block.inner(area);
     frame.render_widget(block, area);
-
     let layout = Layout::vertical([
-        Constraint::Length(1), // blank
-        Constraint::Length(1), // "Battery  [throbber] loading..."
-        Constraint::Min(0),    // remaining info
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Min(0),
     ])
     .split(inner);
-
     frame.render_widget(
         Paragraph::new(Span::styled(
             "  Battery  ",
@@ -255,24 +352,23 @@ fn render_battery_throbber(
         )),
         layout[1],
     );
-
-    let label_width = "  Battery  ".len() as u16;
+    let lw = "  Battery  ".len() as u16;
     let throbber_area = Rect {
-        x: layout[1].x + label_width,
+        x: layout[1].x + lw,
         y: layout[1].y,
-        width: layout[1].width.saturating_sub(label_width),
+        width: layout[1].width.saturating_sub(lw),
         height: 1,
     };
-
-    let throbber = Throbber::default()
-        .label(" loading...")
-        .style(Style::new().fg(Color::Yellow))
-        .throbber_style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD))
-        .throbber_set(BRAILLE_SIX_DOUBLE)
-        .use_type(WhichUse::Spin);
-
-    frame.render_stateful_widget(throbber, throbber_area, &mut app.throbber_state);
-
+    frame.render_stateful_widget(
+        Throbber::default()
+            .label(" loading...")
+            .style(Style::new().fg(Color::Yellow))
+            .throbber_style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+            .throbber_set(BRAILLE_SIX_DOUBLE)
+            .use_type(WhichUse::Spin),
+        throbber_area,
+        &mut app.throbber_state,
+    );
     push_status_info(extra_lines, app);
     frame.render_widget(Paragraph::new(std::mem::take(extra_lines)), layout[2]);
 }
@@ -282,7 +378,6 @@ fn render_battery_lines(lines: &mut Vec<Line>, battery: Option<&MouseStatus>) {
         Some(b) => {
             let color = battery_color(b.battery_level);
             let charging = if b.is_charging { " ⚡" } else { "" };
-
             lines.push(Line::from(vec![
                 Span::styled("  Battery  ", Style::new().fg(Color::DarkGray)),
                 Span::styled(
@@ -290,7 +385,6 @@ fn render_battery_lines(lines: &mut Vec<Line>, battery: Option<&MouseStatus>) {
                     Style::new().fg(color).bold(),
                 ),
             ]));
-
             let filled = (b.battery_level as usize * 30 / 100).min(30);
             lines.push(Line::from(Span::styled(
                 format!("  {}{}", "█".repeat(filled), "░".repeat(30 - filled)),
@@ -315,7 +409,6 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
             Style::new().fg(Color::DarkGray),
         ),
     };
-
     frame.render_widget(Paragraph::new(Line::from(Span::styled(msg, style))), area);
 }
 
@@ -337,7 +430,6 @@ fn battery_color(level: u8) -> Color {
     }
 }
 
-/// Format a battery interval in seconds as a human-readable string.
 fn interval_label(secs: u64) -> String {
     match secs {
         s if s < 60 => format!("{}s", s),

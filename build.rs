@@ -1,7 +1,7 @@
 //! Build script: rasterizes battery icon SVGs from `assets/icons/` into
 //! static ARGB32 pixel arrays embedded in the binary.
 //!
-//! Output: `$OUT_DIR/icons_generated.rs`, included by `src/tray/icon.rs`.
+//! Output: `$OUT_DIR/icons_generated.rs`, included by `src/tray/icons.rs`.
 //! Regenerated whenever any file under `assets/icons/` changes.
 //!
 //! The SNI protocol's `icon_pixmap` field expects ARGB32 in network byte
@@ -15,22 +15,9 @@ use std::path::PathBuf;
 /// Pixel sizes to rasterize. The compositor picks the closest available size.
 const SIZES: &[u32] = &[16, 22, 32];
 
-/// (filename_stem, const_name_base)
-const VARIANTS: &[(&str, &str)] = &[
-    ("battery_0", "BATTERY_0"),
-    ("battery_1", "BATTERY_1"),
-    ("battery_2", "BATTERY_2"),
-    ("battery_3", "BATTERY_3"),
-    ("battery_4", "BATTERY_4"),
-    ("battery_5", "BATTERY_5"),
-    ("battery_full", "BATTERY_FULL"),
-    ("battery_charging_0", "BATTERY_CHARGING_0"),
-    ("battery_charging_1", "BATTERY_CHARGING_1"),
-    ("battery_charging_2", "BATTERY_CHARGING_2"),
-    ("battery_charging_3", "BATTERY_CHARGING_3"),
-    ("battery_charging_4", "BATTERY_CHARGING_4"),
-    ("battery_charging_5", "BATTERY_CHARGING_5"),
-    ("battery_charging_full", "BATTERY_CHARGING_FULL"),
+/// Battery levels for which we have SVG assets (5% granularity).
+const LEVELS: &[u8] = &[
+    0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100,
 ];
 
 fn main() {
@@ -38,7 +25,6 @@ fn main() {
     let icons_dir = manifest_dir.join("assets").join("icons");
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
 
-    // Rerun if any SVG changes or a new one is added.
     println!("cargo:rerun-if-changed=assets/icons");
 
     let mut out = String::from(
@@ -52,53 +38,129 @@ fn main() {
          }\n\n",
     );
 
-    for (stem, const_base) in VARIANTS {
-        let svg_path = icons_dir.join(format!("{}.svg", stem));
+    // Render all levels for both discharging and charging variants.
+    for &charging in &[false, true] {
+        for &level in LEVELS {
+            let stem = if charging {
+                format!("battery_charging_{}", level)
+            } else {
+                format!("battery_{}", level)
+            };
+            let const_base = stem.to_uppercase();
+            let svg_path = icons_dir.join(format!("{}.svg", stem));
 
-        let svg_data = std::fs::read(&svg_path)
-            .unwrap_or_else(|e| panic!("build.rs: failed to read {}: {}", svg_path.display(), e));
+            let svg_data = std::fs::read(&svg_path).unwrap_or_else(|e| {
+                panic!("build.rs: failed to read {}: {}", svg_path.display(), e)
+            });
 
-        let tree = {
-            let opts = resvg::usvg::Options::default();
-            resvg::usvg::Tree::from_data(&svg_data, &opts).unwrap_or_else(|e| {
-                panic!("build.rs: failed to parse {}: {}", svg_path.display(), e)
-            })
-        };
+            let tree = {
+                let opts = resvg::usvg::Options::default();
+                resvg::usvg::Tree::from_data(&svg_data, &opts).unwrap_or_else(|e| {
+                    panic!("build.rs: failed to parse {}: {}", svg_path.display(), e)
+                })
+            };
 
-        for &size in SIZES {
-            let sx = size as f32 / tree.size().width();
-            let sy = size as f32 / tree.size().height();
-            let transform = resvg::tiny_skia::Transform::from_scale(sx, sy);
+            for &size in SIZES {
+                let sx = size as f32 / tree.size().width();
+                let sy = size as f32 / tree.size().height();
+                let transform = resvg::tiny_skia::Transform::from_scale(sx, sy);
 
-            let mut pixmap = resvg::tiny_skia::Pixmap::new(size, size)
-                .expect("build.rs: failed to create pixmap");
+                let mut pixmap = resvg::tiny_skia::Pixmap::new(size, size)
+                    .expect("build.rs: failed to create pixmap");
 
-            resvg::render(&tree, transform, &mut pixmap.as_mut());
+                resvg::render(&tree, transform, &mut pixmap.as_mut());
 
-            let argb = premul_rgba_to_argb32(pixmap.data());
-            let const_name = format!("{}_{}", const_base, size);
+                let argb = premul_rgba_to_argb32(pixmap.data());
+                let const_name = format!("{}_{}", const_base, size);
 
+                writeln!(
+                    out,
+                    "pub static {}: EmbeddedIcon = EmbeddedIcon {{\n\
+                     \x20   width: {},\n\
+                     \x20   height: {},\n\
+                     \x20   argb32: &{:?},\n\
+                     }};\n",
+                    const_name, size, size, argb
+                )
+                .unwrap();
+            }
+        }
+    }
+
+    // Generate the lookup function so icon.rs stays simple.
+    // Level is snapped to nearest 5% before lookup.
+    writeln!(
+        out,
+        "/// Look up the correct icon for a battery level and state."
+    )
+    .unwrap();
+    writeln!(out, "///").unwrap();
+    writeln!(
+        out,
+        "/// `level` is rounded to the nearest 5% step. Values above 100 are clamped."
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "pub fn get_icon(level: u8, charging: bool, size: u32) -> &'static EmbeddedIcon {{"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "    // Round to nearest 5, cap at 100. Widened to u16 to avoid u8 overflow."
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "    let snapped = (((level as u16 + 2) / 5) * 5).min(100) as u8;"
+    )
+    .unwrap();
+    writeln!(out, "    match (snapped, charging, size) {{").unwrap();
+
+    for &charging in &[false, true] {
+        for &level in LEVELS {
+            let const_base = if charging {
+                format!("BATTERY_CHARGING_{}", level)
+            } else {
+                format!("BATTERY_{}", level)
+            };
             writeln!(
                 out,
-                "pub static {}: EmbeddedIcon = EmbeddedIcon {{\n\
-                 \x20   width: {},\n\
-                 \x20   height: {},\n\
-                 \x20   argb32: &{:?},\n\
-                 }};\n",
-                const_name, size, size, argb
+                "        ({}, {}, 16) => &{}_16,",
+                level, charging, const_base
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "        ({}, {}, 22) => &{}_22,",
+                level, charging, const_base
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "        ({}, {}, _)  => &{}_32,",
+                level, charging, const_base
             )
             .unwrap();
         }
     }
 
+    writeln!(
+        out,
+        "        _ => &BATTERY_0_32, // unreachable after snap+clamp"
+    )
+    .unwrap();
+    writeln!(out, "    }}").unwrap();
+    writeln!(out, "}}").unwrap();
+
     std::fs::write(out_dir.join("icons_generated.rs"), out)
         .expect("build.rs: failed to write icons_generated.rs");
 }
 
-// Convert tiny-skia's premultiplied RGBA to ARGB32 network byte order.
-//
-// tiny-skia pixel layout: `[R_premul, G_premul, B_premul, A]`
-// SNI icon_pixmap layout: `[A, R, G, B]` (big-endian uint32)
+/// Convert tiny-skia's premultiplied RGBA to ARGB32 network byte order.
+///
+/// tiny-skia pixel layout: `[R_premul, G_premul, B_premul, A]`
+/// SNI icon_pixmap layout: `[A, R, G, B]` (big-endian uint32)
 fn premul_rgba_to_argb32(data: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(data.len());
     for px in data.chunks_exact(4) {
