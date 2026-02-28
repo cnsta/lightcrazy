@@ -304,7 +304,7 @@ fn render_toggle(
 ) {
     let cursor = if selected { "›" } else { " " };
     let label_text = format!(" {} {}", cursor, label);
-    let check_text = if checked { "☑" } else { "☐" };
+    let check_text = if checked { "☑ " } else { "☐ " };
     let label_fg = if selected { Color::White } else { Color::Reset };
 
     let [ll, _, vr] = Layout::horizontal([
