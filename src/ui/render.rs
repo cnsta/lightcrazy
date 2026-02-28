@@ -1,13 +1,11 @@
 use ratatui::{prelude::*, widgets::*};
-use throbber_widgets_tui::{Throbber, WhichUse, BRAILLE_SIX_DOUBLE};
+use throbber_widgets_tui::{BRAILLE_SIX_DOUBLE, Throbber, WhichUse};
 use tui_slider::{Slider, SliderState};
 
-use super::app::{lod_label, App, SettingRow, DPI_VALUES, POLLING_RATES, SETTINGS_ROWS};
-use crate::device::protocol::MouseStatus;
+use super::app::{App, DPI_VALUES, POLLING_RATES, SETTINGS_ROWS, SettingRow, lod_label};
 
 pub fn ui(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
-
     let root = Layout::vertical([
         Constraint::Length(3),
         Constraint::Min(0),
@@ -21,11 +19,19 @@ pub fn ui(frame: &mut Frame, app: &mut App) {
         Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).split(root[1]);
 
     render_settings(frame, app, columns[0]);
-    render_status(frame, app, columns[1]);
+    render_info(frame, app, columns[1]);
     render_footer(frame, app, root[2]);
 }
 
-fn render_header(frame: &mut Frame, app: &App, area: Rect) {
+fn render_header(frame: &mut Frame, app: &mut App, area: Rect) {
+    let block = Block::bordered().border_style(Style::new().fg(Color::DarkGray));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    const BATTERY_COL: u16 = 30;
+    let [left, right] =
+        Layout::horizontal([Constraint::Min(0), Constraint::Length(BATTERY_COL)]).areas(inner);
+
     let (conn, path) = if app.device.is_some() {
         (
             if app.device_wired {
@@ -39,7 +45,7 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
         ("not connected", "")
     };
     let fw = app.firmware.as_deref().unwrap_or("—");
-    let line = Line::from(vec![
+    let left_line = Line::from(vec![
         Span::styled("LIGHTCRAZY", Style::new().bold()),
         Span::raw("   "),
         Span::styled(conn, Style::new().fg(Color::Cyan)),
@@ -50,14 +56,64 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
         },
         Span::styled(format!("   fw {}", fw), Style::new().fg(Color::DarkGray)),
     ]);
-    frame.render_widget(
-        Paragraph::new(line)
-            .block(Block::bordered().border_style(Style::new().fg(Color::DarkGray))),
-        area,
-    );
+    frame.render_widget(Paragraph::new(left_line), left);
+    render_header_battery(frame, app, right);
 }
 
-/// Slider rows occupy 2 lines: label+value on top, bar on bottom.
+fn render_header_battery(frame: &mut Frame, app: &mut App, area: Rect) {
+    match &app.battery {
+        Some(b) => {
+            let level = b.battery_level;
+            let charging = b.is_charging;
+            let color = battery_color(level);
+            let pct_str = if charging {
+                format!("{:3}% ⚡  ", level)
+            } else {
+                format!("{:3}%    ", level)
+            };
+            let bar_width = (area.width as usize).saturating_sub(pct_str.len());
+            let filled = (level as usize * bar_width / 100).min(bar_width);
+            let empty = bar_width - filled;
+            let bar = format!("{}{}", "█".repeat(filled), "░".repeat(empty));
+            frame.render_widget(
+                Paragraph::new(Line::from(vec![
+                    Span::styled(bar, Style::new().fg(color)),
+                    Span::styled(pct_str, Style::new().fg(color).bold()),
+                ])),
+                area,
+            );
+        }
+        None if app.battery_loading => {
+            let prefix = "battery ";
+            let [pl, thr] =
+                Layout::horizontal([Constraint::Length(prefix.len() as u16), Constraint::Min(0)])
+                    .areas(area);
+            frame.render_widget(
+                Paragraph::new(Span::styled(prefix, Style::new().fg(Color::DarkGray))),
+                pl,
+            );
+            frame.render_stateful_widget(
+                Throbber::default()
+                    .style(Style::new().fg(Color::Yellow))
+                    .throbber_style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+                    .throbber_set(BRAILLE_SIX_DOUBLE)
+                    .use_type(WhichUse::Spin),
+                thr,
+                &mut app.throbber_state,
+            );
+        }
+        None => {
+            frame.render_widget(
+                Paragraph::new(Span::styled(
+                    "no battery data",
+                    Style::new().fg(Color::DarkGray),
+                )),
+                area,
+            );
+        }
+    }
+}
+
 fn row_height(row: &SettingRow) -> u16 {
     match row {
         SettingRow::Dpi | SettingRow::PollingRate | SettingRow::Debounce => 2,
@@ -107,13 +163,6 @@ fn render_settings(frame: &mut Frame, app: &App, area: Rect) {
                     &app.polling_slider,
                 );
             }
-            SettingRow::LiftOffDistance => render_row(
-                frame,
-                rect,
-                selected,
-                "Lift-Off Distance",
-                lod_label(s.lod()),
-            ),
             SettingRow::Debounce => {
                 let val = app.debounce_slider.value().round() as u8;
                 render_slider_row(
@@ -125,6 +174,13 @@ fn render_settings(frame: &mut Frame, app: &App, area: Rect) {
                     &app.debounce_slider,
                 );
             }
+            SettingRow::LiftOffDistance => render_row(
+                frame,
+                rect,
+                selected,
+                "Lift-Off Distance",
+                lod_label(s.lod()),
+            ),
             SettingRow::AngleSnap => {
                 render_toggle(frame, rect, selected, "Angle Snap", s.angle_snap)
             }
@@ -155,13 +211,6 @@ fn render_settings(frame: &mut Frame, app: &App, area: Rect) {
     }
 }
 
-/// Two-line slider row.
-///
-/// Top line: cursor glyph (left) + label + value flush-right.
-/// Bottom line: tui-slider bar aligned under the label text.
-///
-/// Selection is shown by a › cursor instead of a background colour.
-/// Inactive bars render in DarkGray; active bars: Cyan/DarkGray/White.
 fn render_slider_row(
     frame: &mut Frame,
     rect: Rect,
@@ -177,7 +226,6 @@ fn render_slider_row(
     let label_text = format!(" {} {}", cursor, label);
     let value_text = format!("{}  ", value_str);
     let label_fg = if selected { Color::White } else { Color::Reset };
-    let value_fg = Color::Cyan;
 
     let [ll, _, vr] = Layout::horizontal([
         Constraint::Length(label_text.len() as u16),
@@ -191,11 +239,13 @@ fn render_slider_row(
         ll,
     );
     frame.render_widget(
-        Paragraph::new(Span::styled(value_text, Style::new().fg(value_fg).bold())),
+        Paragraph::new(Span::styled(
+            value_text,
+            Style::new().fg(Color::Cyan).bold(),
+        )),
         vr,
     );
 
-    // Bar indented 3 chars to sit under the label text (past " › " prefix).
     let bar_area = Rect {
         x: bar_rect.x + 3,
         width: bar_rect.width.saturating_sub(3),
@@ -254,8 +304,7 @@ fn render_toggle(
 ) {
     let cursor = if selected { "›" } else { " " };
     let label_text = format!(" {} {}", cursor, label);
-    // Checkbox + 2-char right margin to match value padding on other rows.
-    let check_text = if checked { "☑ " } else { "☐ " };
+    let check_text = if checked { "☑   " } else { "☐   " };
     let label_fg = if selected { Color::White } else { Color::Reset };
 
     let [ll, _, vr] = Layout::horizontal([
@@ -278,125 +327,123 @@ fn render_toggle(
     );
 }
 
-fn render_status(frame: &mut Frame, app: &mut App, area: Rect) {
-    let mut lines: Vec<Line> = vec![Line::raw("")];
-    if app.device.is_none() {
-        lines.push(Line::from(Span::styled(
-            "  No device found",
-            Style::new().fg(Color::Red).bold(),
-        )));
-        lines.push(Line::raw(""));
-        lines.push(Line::from(Span::styled(
-            "  Connect via USB or 8K dongle",
-            Style::new().fg(Color::DarkGray),
-        )));
-        frame.render_widget(
-            Paragraph::new(lines).block(
-                Block::bordered()
-                    .title(" Status ")
-                    .border_style(Style::new().fg(Color::DarkGray)),
-            ),
-            area,
-        );
-        return;
-    }
-    if app.battery_loading {
-        render_battery_throbber(frame, app, area, &mut lines);
-    } else {
-        render_battery_lines(&mut lines, app.battery.as_ref());
-        push_status_info(&mut lines, app);
-        frame.render_widget(
-            Paragraph::new(lines).block(
-                Block::bordered()
-                    .title(" Status ")
-                    .border_style(Style::new().fg(Color::DarkGray)),
-            ),
-            area,
-        );
-    }
-}
-
-fn push_status_info(lines: &mut Vec<Line>, app: &App) {
-    lines.push(Line::raw(""));
-    if let Some(fw) = app.firmware.as_deref() {
-        lines.push(kv("  Firmware", fw.to_string()));
-    }
-    lines.push(kv(
-        "  Polling",
-        format!("{} Hz", app.settings.polling_rate().as_hz()),
-    ));
-    lines.push(kv("  DPI", format!("{}", app.dpi)));
-}
-
-fn render_battery_throbber(
-    frame: &mut Frame,
-    app: &mut App,
-    area: Rect,
-    extra_lines: &mut Vec<Line>,
-) {
-    let block = Block::bordered()
-        .title(" Status ")
-        .border_style(Style::new().fg(Color::DarkGray));
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-    let layout = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Length(1),
-        Constraint::Min(0),
-    ])
-    .split(inner);
+fn render_info(frame: &mut Frame, app: &App, area: Rect) {
+    let row = SETTINGS_ROWS[app.settings_row];
+    let (title, body) = setting_description(row);
     frame.render_widget(
-        Paragraph::new(Span::styled(
-            "  Battery  ",
-            Style::new().fg(Color::DarkGray),
-        )),
-        layout[1],
+        Paragraph::new(body)
+            .block(
+                Block::bordered()
+                    .title(format!(" {} ", title))
+                    .border_style(Style::new().fg(Color::DarkGray)),
+            )
+            .wrap(Wrap { trim: true })
+            .style(Style::new().fg(Color::DarkGray)),
+        area,
     );
-    let lw = "  Battery  ".len() as u16;
-    let throbber_area = Rect {
-        x: layout[1].x + lw,
-        y: layout[1].y,
-        width: layout[1].width.saturating_sub(lw),
-        height: 1,
-    };
-    frame.render_stateful_widget(
-        Throbber::default()
-            .label(" loading...")
-            .style(Style::new().fg(Color::Yellow))
-            .throbber_style(Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD))
-            .throbber_set(BRAILLE_SIX_DOUBLE)
-            .use_type(WhichUse::Spin),
-        throbber_area,
-        &mut app.throbber_state,
-    );
-    push_status_info(extra_lines, app);
-    frame.render_widget(Paragraph::new(std::mem::take(extra_lines)), layout[2]);
 }
 
-fn render_battery_lines(lines: &mut Vec<Line>, battery: Option<&MouseStatus>) {
-    match battery {
-        Some(b) => {
-            let color = battery_color(b.battery_level);
-            let charging = if b.is_charging { " ⚡" } else { "" };
-            lines.push(Line::from(vec![
-                Span::styled("  Battery  ", Style::new().fg(Color::DarkGray)),
-                Span::styled(
-                    format!("{}%{}", b.battery_level, charging),
-                    Style::new().fg(color).bold(),
-                ),
-            ]));
-            let filled = (b.battery_level as usize * 30 / 100).min(30);
-            lines.push(Line::from(Span::styled(
-                format!("  {}{}", "█".repeat(filled), "░".repeat(30 - filled)),
-                Style::new().fg(color),
-            )));
-        }
-        None => {
-            lines.push(Line::from(Span::styled(
-                "  Battery  unavailable",
-                Style::new().fg(Color::DarkGray),
-            )));
-        }
+fn setting_description(row: SettingRow) -> (&'static str, &'static str) {
+    match row {
+        SettingRow::Dpi => (
+            "DPI",
+            "DPI (dots per inch) controls how far the cursor travels on screen \
+relative to physical mouse movement. Higher values move the cursor further \
+with less effort, which suits large monitors or fast-paced scenarios. \
+Lower values give more precise control over small movements.\n\n\
+The X2 supports six presets: 400, 800, 1600, 3200, 6400, and 12800. Use \
+left/right to position the slider, then press Enter to apply the value \
+to the sensor.",
+        ),
+        SettingRow::PollingRate => (
+            "Polling Rate",
+            "Polling rate is how many times per second the mouse reports its \
+position to the computer. Higher rates reduce the delay between physical \
+movement and the on-screen response. 8000 Hz means one report every \
+0.125 ms, versus 8 ms at 125 Hz.\n\n\
+4K Hz requires the dedicated 4K receiver. 8K Hz requires the 8K dongle. \
+Both also require a compatible host port. The improvement is most \
+perceptible during fast, precise movements.",
+        ),
+        SettingRow::Debounce => (
+            "Debounce Time",
+            "Debounce sets the minimum time that must pass between two clicks \
+registering as separate events. Mechanical switches can produce brief \
+electrical noise on actuation, which may read as an unintended double-click \
+at 0 ms.\n\n\
+2-4 ms absorbs most switch variance without any perceptible delay. Higher \
+values add a slight but measurable lag to click registration. Set to 0 only \
+if your switches are clean and you need the fastest possible response.",
+        ),
+        SettingRow::LiftOffDistance => (
+            "Lift-Off Distance",
+            "Lift-off distance is the height above the surface at which the sensor \
+stops tracking when the mouse is lifted.\n\n\
+Low (0.7 mm) is ideal for players who frequently reposition — the sensor \
+disengages almost immediately on lift, preventing cursor drift. Medium \
+(1 mm) suits most surfaces and is the default. High (2 mm) helps on thick \
+mouse feet or textured and reflective mousepads where the sensor may \
+struggle to lock at very low clearance.",
+        ),
+        SettingRow::AngleSnap => (
+            "Angle Snapping",
+            "Angle snapping applies a filter that pulls near-horizontal and \
+near-vertical cursor movements toward a perfectly straight line. You can \
+test the effect by slowly drawing a nearly-straight line in a paint program \
+— with angle snapping on it will snap to the axis.\n\n\
+Useful in productivity contexts where straight strokes matter. Most users \
+leave it off in games, as it subtly alters diagonal movement direction and \
+can interfere with precise aim.",
+        ),
+        SettingRow::RippleControl => (
+            "Ripple Control",
+            "Ripple control smooths out jagged micro-movements in fast cursor \
+strokes, reducing the irregular edges that appear at high speed and DPI. \
+Like angle snapping, the effect is visible when drawing fast lines in a \
+paint application.\n\n\
+Most relevant for graphic and design work. In games it is generally left \
+off, as the additional filtering can soften fine motor input.",
+        ),
+        SettingRow::MotionSync => (
+            "Motion Sync",
+            "Motion sync aligns the sensor's data transmission to the exact \
+moment the computer polls for mouse position. Without it, sensor samples \
+and polling cycles are slightly out of phase, introducing minor variability \
+in when data arrives.\n\n\
+With motion sync on, each position report is sent at the start of the \
+polling window. This does not reduce average latency but decreases its \
+variance, producing more consistent input timing — most noticeable at \
+high polling rates.",
+        ),
+        SettingRow::TurboMode => (
+            "Turbo Mode",
+            "Turbo mode locks the sensor's internal scanning rate at 20,000 FPS \
+regardless of DPI or polling rate. Normally the sensor scales its frame \
+rate with those settings — at low DPI and polling rate it can drop well \
+below 10K FPS, reducing tracking fidelity during fast movements.\n\n\
+With turbo mode on, the sensor always operates at peak rate, ensuring \
+maximum tracking accuracy under all conditions. The trade-off is \
+meaningfully higher power consumption, which shortens battery life \
+between charges.",
+        ),
+        SettingRow::NotificationThreshold => (
+            "Alert Threshold",
+            "The battery percentage at which a desktop notification is sent \
+warning that the mouse needs charging. Adjustable in 5% steps between \
+5% and 50%.\n\n\
+Set higher if you want an early warning and time to locate a cable. Set \
+lower if you charge on a fixed routine and want to avoid frequent \
+notifications during normal use.",
+        ),
+        SettingRow::BatteryInterval => (
+            "Battery Interval",
+            "How often the background tray service polls the mouse for its \
+current battery level. Shorter intervals keep the tray icon more up to \
+date but cause the device to wake from idle slightly more often.\n\n\
+60 seconds is a good default. 30 seconds is reasonable if you charge \
+frequently and want accurate readings. Changes take effect the next time \
+the tray service starts.",
+        ),
     }
 }
 
@@ -410,14 +457,6 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
         ),
     };
     frame.render_widget(Paragraph::new(Line::from(Span::styled(msg, style))), area);
-}
-
-fn kv(key: &'static str, value: String) -> Line<'static> {
-    Line::from(vec![
-        Span::styled(key, Style::new().fg(Color::DarkGray)),
-        Span::raw("  "),
-        Span::raw(value),
-    ])
 }
 
 fn battery_color(level: u8) -> Color {
