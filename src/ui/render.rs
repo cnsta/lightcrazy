@@ -429,7 +429,7 @@ meaningfully higher power consumption, which shortens battery life.",
             "Alert Threshold",
             "The battery percentage at which a desktop notification is sent \
 warning that the mouse needs charging. Adjustable in 5 percent steps between \
-5—50 percent.\n\n\
+5–50 percent.\n\n\
 The default, 20 percent, correlates with when the dongle begins flashing.",
         ),
         SettingRow::BatteryInterval => (
