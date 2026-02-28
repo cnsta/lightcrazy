@@ -19,7 +19,7 @@ in
     };
 
     service.enable = mkEnableOption ''
-      LightCrazy systemd user service.
+      Systemd user service.
 
       Runs `lightcrazy` in tray mode as a systemd user service, started
       automatically with your graphical session. Battery check interval,
@@ -49,7 +49,7 @@ in
 
     (mkIf cfg.service.enable {
       systemd.user.services.lightcrazy = {
-        description = "LightCrazy Battery Tray";
+        description = "lightcrazy tray";
         wantedBy = [ "graphical-session.target" ];
         partOf = [ "graphical-session.target" ];
         after = [ "graphical-session.target" ];

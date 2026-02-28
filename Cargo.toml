@@ -23,6 +23,7 @@ hidapi = "2.6"
 ratatui = "0.30"
 crossterm = "0.29"
 throbber-widgets-tui = "0.10"
+tui-slider = "0.3"
 
 # Tray
 ksni = { version = "0.3", features = ["blocking"] }

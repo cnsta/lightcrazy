@@ -44,7 +44,7 @@ fn main() -> anyhow::Result<()> {
             .format_timestamp(Some(env_logger::TimestampPrecision::Seconds))
             .init();
 
-        info!("Starting LightCrazy tray");
+        info!("Starting lightcrazy tray");
 
         let _lock = acquire_tray_lock().map_err(|_| {
             anyhow::anyhow!(
