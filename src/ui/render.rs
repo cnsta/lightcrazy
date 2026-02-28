@@ -304,7 +304,7 @@ fn render_toggle(
 ) {
     let cursor = if selected { "›" } else { " " };
     let label_text = format!(" {} {}", cursor, label);
-    let check_text = if checked { "☑ " } else { "☐ " };
+    let check_text = if checked { " " } else { " " };
     let label_fg = if selected { Color::White } else { Color::Reset };
 
     let [ll, _, vr] = Layout::horizontal([
@@ -351,7 +351,7 @@ fn setting_description(row: SettingRow) -> (&'static str, &'static str) {
 relative to physical mouse movement. Higher values move the cursor further \
 with less effort, which suits large monitors or fast-paced scenarios. \
 Lower values give more precise control over small movements.\n\n\
-The X2 supports six presets: 400, 800, 1600, 3200, 6400, and 12800. Use \
+This software supports six presets: 400, 800, 1600, 3200, 6400, and 12800. Use \
 left/right to position the slider, then press Enter to apply the value \
 to the sensor.",
         ),
@@ -366,20 +366,20 @@ Both also require a compatible host port. The improvement is most \
 perceptible during fast, precise movements.",
         ),
         SettingRow::Debounce => (
-            "Debounce Time",
+            "Debounce",
             "Debounce sets the minimum time that must pass between two clicks \
 registering as separate events. Mechanical switches can produce brief \
 electrical noise on actuation, which may read as an unintended double-click \
 at 0 ms.\n\n\
-2-4 ms absorbs most switch variance without any perceptible delay. Higher \
+2—4 ms absorbs most switch variance without any perceptible delay. Higher \
 values add a slight but measurable lag to click registration. Set to 0 only \
 if your switches are clean and you need the fastest possible response.",
         ),
         SettingRow::LiftOffDistance => (
             "Lift-Off Distance",
-            "Lift-off distance is the height above the surface at which the sensor \
+            "LOD is the height above the surface at which the sensor \
 stops tracking when the mouse is lifted.\n\n\
-Low (0.7 mm) is ideal for players who frequently reposition — the sensor \
+Low (0.7 mm) is ideal for users who frequently reposition, the sensor \
 disengages almost immediately on lift, preventing cursor drift. Medium \
 (1 mm) suits most surfaces and is the default. High (2 mm) helps on thick \
 mouse feet or textured and reflective mousepads where the sensor may \
@@ -389,8 +389,8 @@ struggle to lock at very low clearance.",
             "Angle Snapping",
             "Angle snapping applies a filter that pulls near-horizontal and \
 near-vertical cursor movements toward a perfectly straight line. You can \
-test the effect by slowly drawing a nearly-straight line in a paint program \
-— with angle snapping on it will snap to the axis.\n\n\
+test the effect by slowly drawing a nearly-straight line in a paint program, \
+with angle snapping on it will snap to the axis.\n\n\
 Useful in productivity contexts where straight strokes matter. Most users \
 leave it off in games, as it subtly alters diagonal movement direction and \
 can interfere with precise aim.",
@@ -412,28 +412,25 @@ and polling cycles are slightly out of phase, introducing minor variability \
 in when data arrives.\n\n\
 With motion sync on, each position report is sent at the start of the \
 polling window. This does not reduce average latency but decreases its \
-variance, producing more consistent input timing — most noticeable at \
+variance, producing more consistent input timing, most noticeable at \
 high polling rates.",
         ),
         SettingRow::TurboMode => (
             "Turbo Mode",
             "Turbo mode locks the sensor's internal scanning rate at 20,000 FPS \
 regardless of DPI or polling rate. Normally the sensor scales its frame \
-rate with those settings — at low DPI and polling rate it can drop well \
+rate with those settings, at low DPI and polling rate it can drop well \
 below 10K FPS, reducing tracking fidelity during fast movements.\n\n\
 With turbo mode on, the sensor always operates at peak rate, ensuring \
 maximum tracking accuracy under all conditions. The trade-off is \
-meaningfully higher power consumption, which shortens battery life \
-between charges.",
+meaningfully higher power consumption, which shortens battery life.",
         ),
         SettingRow::NotificationThreshold => (
             "Alert Threshold",
             "The battery percentage at which a desktop notification is sent \
-warning that the mouse needs charging. Adjustable in 5% steps between \
-5% and 50%.\n\n\
-Set higher if you want an early warning and time to locate a cable. Set \
-lower if you charge on a fixed routine and want to avoid frequent \
-notifications during normal use.",
+warning that the mouse needs charging. Adjustable in 5 percent steps between \
+5—50 percent.\n\n\
+The default, 20 percent, correlates with when the dongle begins flashing.",
         ),
         SettingRow::BatteryInterval => (
             "Battery Interval",
