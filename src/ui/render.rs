@@ -1,8 +1,8 @@
 use ratatui::{prelude::*, widgets::*};
-use throbber_widgets_tui::{BRAILLE_SIX_DOUBLE, Throbber, WhichUse};
+use throbber_widgets_tui::{Throbber, WhichUse, BRAILLE_SIX_DOUBLE};
 use tui_slider::{Slider, SliderState};
 
-use super::app::{App, DPI_VALUES, POLLING_RATES, SETTINGS_ROWS, SettingRow, lod_label};
+use super::app::{lod_label, App, SettingRow, DPI_VALUES, POLLING_RATES, SETTINGS_ROWS};
 
 pub fn ui(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
@@ -46,7 +46,7 @@ fn render_header(frame: &mut Frame, app: &mut App, area: Rect) {
     };
     let fw = app.firmware.as_deref().unwrap_or("—");
     let left_line = Line::from(vec![
-        Span::styled("LIGHTCRAZY", Style::new().bold()),
+        Span::styled(" LIGHTCRAZY", Style::new().bold()),
         Span::raw("   "),
         Span::styled(conn, Style::new().fg(Color::Cyan)),
         if !path.is_empty() {
@@ -67,9 +67,9 @@ fn render_header_battery(frame: &mut Frame, app: &mut App, area: Rect) {
             let charging = b.is_charging;
             let color = battery_color(level);
             let pct_str = if charging {
-                format!("{:3}% ⚡  ", level)
+                format!("{:3} % ⚡ ", level)
             } else {
-                format!("{:3}%    ", level)
+                format!("{:3} % ", level)
             };
             let bar_width = (area.width as usize).saturating_sub(pct_str.len());
             let filled = (level as usize * bar_width / 100).min(bar_width);
@@ -198,7 +198,7 @@ fn render_settings(frame: &mut Frame, app: &App, area: Rect) {
                 rect,
                 selected,
                 "Alert Threshold",
-                format!("{}%", s.notification_threshold),
+                format!("{} %", s.notification_threshold),
             ),
             SettingRow::BatteryInterval => render_row(
                 frame,
@@ -304,7 +304,7 @@ fn render_toggle(
 ) {
     let cursor = if selected { "›" } else { " " };
     let label_text = format!(" {} {}", cursor, label);
-    let check_text = if checked { "☑   " } else { "☐   " };
+    let check_text = if checked { "☑" } else { "☐" };
     let label_fg = if selected { Color::White } else { Color::Reset };
 
     let [ll, _, vr] = Layout::horizontal([
@@ -471,8 +471,8 @@ fn battery_color(level: u8) -> Color {
 
 fn interval_label(secs: u64) -> String {
     match secs {
-        s if s < 60 => format!("{}s", s),
-        s if s % 60 == 0 => format!("{}m", s / 60),
-        s => format!("{}m {}s", s / 60, s % 60),
+        s if s < 60 => format!("{} s", s),
+        s if s % 60 == 0 => format!("{} m", s / 60),
+        s => format!("{} m {} s", s / 60, s % 60),
     }
 }
