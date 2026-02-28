@@ -386,7 +386,7 @@ mouse feet or textured and reflective mousepads where the sensor may \
 struggle to lock at very low clearance.",
         ),
         SettingRow::AngleSnap => (
-            "Angle Snapping",
+            "Angle Snap",
             "Angle snapping applies a filter that pulls near-horizontal and \
 near-vertical cursor movements toward a perfectly straight line. You can \
 test the effect by slowly drawing a nearly-straight line in a paint program, \
