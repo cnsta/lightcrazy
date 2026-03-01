@@ -450,6 +450,11 @@ pub fn run() -> Result<()> {
 
     execute!(
         stdout,
+        // Set a distinct window title so window managers can identify and
+        // target this window with rules (e.g. Hyprland windowrule).
+        // crossterm translates this to the OSC 0 ANSI escape sequence which
+        // all modern terminal emulators honour.
+        terminal::SetTitle("LightCrazy"),
         terminal::Clear(terminal::ClearType::All),
         EnterAlternateScreen,
         EnableMouseCapture,

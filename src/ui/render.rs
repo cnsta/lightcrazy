@@ -122,9 +122,12 @@ fn row_height(row: &SettingRow) -> u16 {
 }
 
 fn render_settings(frame: &mut Frame, app: &App, area: Rect) {
+    // Padding::new(left, right, top, bottom) — provides the content inset
+    // for all rows without any per-row space hacks.
     let block = Block::bordered()
         .title(" Settings ")
-        .border_style(Style::new().fg(Color::DarkGray));
+        .border_style(Style::new().fg(Color::DarkGray))
+        .padding(Padding::new(1, 1, 0, 0));
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -223,8 +226,9 @@ fn render_slider_row(
         Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas(rect);
 
     let cursor = if selected { "›" } else { " " };
-    let label_text = format!(" {} {}", cursor, label);
-    let value_text = format!("{}  ", value_str);
+    // Block padding provides the outer left/right inset; no extra spaces needed.
+    let label_text = format!("{} {}", cursor, label);
+    let value_text = value_str.to_string();
     let label_fg = if selected { Color::White } else { Color::Reset };
 
     let [ll, _, vr] = Layout::horizontal([
@@ -246,9 +250,10 @@ fn render_slider_row(
         vr,
     );
 
+    // Indent 2 chars under the "› " cursor prefix.
     let bar_area = Rect {
-        x: bar_rect.x + 3,
-        width: bar_rect.width.saturating_sub(3),
+        x: bar_rect.x + 2,
+        width: bar_rect.width.saturating_sub(2),
         ..bar_rect
     };
     let (fc, ec, hc) = if selected {
@@ -271,8 +276,8 @@ fn render_slider_row(
 
 fn render_row(frame: &mut Frame, rect: Rect, selected: bool, label: &str, value: String) {
     let cursor = if selected { "›" } else { " " };
-    let label_text = format!(" {} {}", cursor, label);
-    let value_text = format!("{}  ", value);
+    let label_text = format!("{} {}", cursor, label);
+    let value_text = value;
     let label_fg = if selected { Color::White } else { Color::Reset };
 
     let [ll, _, vr] = Layout::horizontal([
@@ -303,8 +308,8 @@ fn render_toggle(
     checked: bool,
 ) {
     let cursor = if selected { "›" } else { " " };
-    let label_text = format!(" {} {}", cursor, label);
-    let check_text = if checked { " " } else { " " };
+    let label_text = format!("{} {}", cursor, label);
+    let check_text = if checked { "[x]" } else { "[ ]" };
     let label_fg = if selected { Color::White } else { Color::Reset };
 
     let [ll, _, vr] = Layout::horizontal([

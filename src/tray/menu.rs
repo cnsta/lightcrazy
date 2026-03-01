@@ -213,33 +213,53 @@ fn find_terminal_in_nix_profiles(skip: &[&str]) -> Option<String> {
 fn try_launch_in_terminal(terminal: &str, bin: &str, extra_args: &[&str]) -> bool {
     use std::process::Command;
 
+    // Each emulator has its own flag for setting the WM_CLASS / app-id.
+    // Setting this lets window managers match lightcrazy with window rules
+    // independently of which terminal is used.
+    // The window title is set from inside the TUI via OSC 0 escape sequences.
     let result = match terminal {
-        "kitty" | "alacritty" | "ghostty" => Command::new(terminal)
-            .arg("-e")
+        "alacritty" => Command::new("alacritty")
+            .args(["--class", "lightcrazy,lightcrazy", "-e"])
             .arg(bin)
             .args(extra_args)
             .spawn(),
-        "foot" => Command::new("foot").arg(bin).args(extra_args).spawn(),
+        "kitty" => Command::new("kitty")
+            .args(["--class", "lightcrazy", "-e"])
+            .arg(bin)
+            .args(extra_args)
+            .spawn(),
+        "foot" => Command::new("foot")
+            .args(["--app-id=lightcrazy"])
+            .arg(bin)
+            .args(extra_args)
+            .spawn(),
+        "ghostty" => Command::new("ghostty")
+            .args(["--class=lightcrazy", "-e"])
+            .arg(bin)
+            .args(extra_args)
+            .spawn(),
         "wezterm" => Command::new("wezterm")
-            .args(["start", "--"])
+            .args(["start", "--class", "lightcrazy", "--"])
             .arg(bin)
             .args(extra_args)
             .spawn(),
         "konsole" => Command::new("konsole")
-            .arg("-e")
+            .args(["--name", "lightcrazy", "-e"])
             .arg(bin)
             .args(extra_args)
             .spawn(),
         "gnome-terminal" => Command::new("gnome-terminal")
-            .arg("--")
+            .args(["--class=lightcrazy", "--"])
             .arg(bin)
             .args(extra_args)
             .spawn(),
         "xterm" => Command::new("xterm")
-            .arg("-e")
+            .args(["-class", "lightcrazy", "-e"])
             .arg(bin)
             .args(extra_args)
             .spawn(),
+        // Absolute-path entries (from find_terminal_in_nix_profiles) and any
+        // unknown terminal: fall back to -e without a class flag.
         other => Command::new(other)
             .arg("-e")
             .arg(bin)
@@ -308,6 +328,12 @@ impl Tray for BatteryTray {
 
     fn menu(&self) -> Vec<MenuItem<Self>> {
         let ctx = self.ctx.lock().unwrap();
+        // NOTE: dbusmenu caches the menu layout for the lifetime of an open popup.
+        // The host re-queries icon_name() and tool_tip() immediately on change
+        // (via NewIcon/NewToolTip signals), but an already-open menu popup is a
+        // static snapshot, LayoutUpdated signals are ignored while it is visible.
+        // This means the battery label here will always reflect the state at the
+        // moment the user right-clicked. It will be correct on the next open.
         let battery_text = match ctx.battery {
             Some((level, charging)) => {
                 format!("Battery: {}%{}", level, if charging { " ⚡" } else { "" })
