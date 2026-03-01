@@ -74,6 +74,21 @@ pub const SETTINGS_ROWS: [SettingRow; 10] = [
     SettingRow::BatteryInterval,
 ];
 
+/// Tracks whether the user has started navigating settings yet.
+///
+/// On launch the app shows a splash screen (Focus::Splash). The first
+/// non-quit keypress transitions to Focus::Settings, placing the cursor
+/// on the first row. This avoids the jarring experience of landing
+/// directly on an interactive control with no context.
+#[derive(Clone, Copy, PartialEq)]
+pub enum Focus {
+    /// Startup state, splash graphic is shown in the right panel,
+    /// settings rows are rendered without a selection cursor.
+    Splash,
+    /// Normal operation, a row is selected and can be adjusted.
+    Settings,
+}
+
 pub struct App {
     pub device: Option<Arc<Mutex<Device>>>,
     pub device_path: String,
@@ -96,6 +111,9 @@ pub struct App {
     pub debounce_slider: SliderState,
 
     pub settings_row: usize,
+    /// Current focus state — controls what the right panel displays and
+    /// whether the settings cursor is visible.
+    pub focus: Focus,
     pub status_msg: Option<(String, bool, Instant)>,
     pub should_quit: bool,
     pub throbber_state: ThrobberState,
@@ -152,6 +170,7 @@ impl App {
             polling_slider,
             debounce_slider,
             settings_row: 0,
+            focus: Focus::Splash,
             status_msg: None,
             should_quit: false,
             throbber_state: ThrobberState::default(),
@@ -182,11 +201,29 @@ impl App {
     }
 
     pub fn on_key(&mut self, code: KeyCode, mods: KeyModifiers) {
+        // Quit works from any focus state.
         match code {
-            KeyCode::Char('q') | KeyCode::Esc => self.should_quit = true,
+            KeyCode::Char('q') | KeyCode::Esc => {
+                self.should_quit = true;
+                return;
+            }
             KeyCode::Char('c') if mods.contains(KeyModifiers::CONTROL) => {
                 self.should_quit = true;
+                return;
             }
+            _ => {}
+        }
+
+        // From the splash screen, any non-quit key transitions to Settings.
+        // The keypress itself is consumed, the next keypress starts navigating.
+        // This gives users a moment to orient before any control is selected.
+        if self.focus == Focus::Splash {
+            self.focus = Focus::Settings;
+            return;
+        }
+
+        // Normal settings navigation.
+        match code {
             KeyCode::Up | KeyCode::Char('k') => {
                 self.settings_row = self.settings_row.saturating_sub(1);
             }

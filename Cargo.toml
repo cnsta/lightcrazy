@@ -1,6 +1,6 @@
 [package]
 name = "lightcrazy"
-version = "0.2.6"
+version = "0.2.7"
 edition = "2024"
 license = "MIT"
 authors = ["cnst <mail@cnst.dev>"]
@@ -24,6 +24,7 @@ ratatui = "0.30"
 crossterm = "0.29"
 throbber-widgets-tui = "0.10"
 tui-slider = "0.3"
+tui-big-text = "0.8"
 
 # Tray
 ksni = { version = "0.3", features = ["blocking"] }

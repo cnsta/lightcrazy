@@ -1,8 +1,9 @@
 use ratatui::{prelude::*, widgets::*};
 use throbber_widgets_tui::{Throbber, WhichUse, BRAILLE_SIX_DOUBLE};
+use tui_big_text::{BigText, PixelSize};
 use tui_slider::{Slider, SliderState};
 
-use super::app::{lod_label, App, SettingRow, DPI_VALUES, POLLING_RATES, SETTINGS_ROWS};
+use super::app::{lod_label, App, Focus, SettingRow, DPI_VALUES, POLLING_RATES, SETTINGS_ROWS};
 
 pub fn ui(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
@@ -19,7 +20,7 @@ pub fn ui(frame: &mut Frame, app: &mut App) {
         Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).split(root[1]);
 
     render_settings(frame, app, columns[0]);
-    render_info(frame, app, columns[1]);
+    render_right_panel(frame, app, columns[1]);
     render_footer(frame, app, root[2]);
 }
 
@@ -140,7 +141,8 @@ fn render_settings(frame: &mut Frame, app: &App, area: Rect) {
 
     for (i, row) in SETTINGS_ROWS.iter().enumerate() {
         let rect = row_rects[i];
-        let selected = i == app.settings_row;
+        // Show the cursor only when the user has left the splash screen.
+        let selected = i == app.settings_row && app.focus == Focus::Settings;
         match row {
             SettingRow::Dpi => {
                 let idx = app.dpi_slider.value().round() as usize;
@@ -329,6 +331,63 @@ fn render_toggle(
             Style::new().fg(Color::Cyan).bold(),
         )),
         vr,
+    );
+}
+
+/// Dispatch the right panel based on the current focus state.
+fn render_right_panel(frame: &mut Frame, app: &App, area: Rect) {
+    if app.focus == Focus::Splash {
+        render_splash(frame, area);
+    } else {
+        render_info(frame, app, area);
+    }
+}
+
+/// Splash screen shown on startup before the user enters the settings list.
+fn render_splash(frame: &mut Frame, area: Rect) {
+    // Widget heights at HalfHeight pixel size:
+    //   2 text lines × 4 rows/line = 8 rows for the big text block
+    //   1 blank separator row
+    //   1 row for the version string
+    const BIG_H: u16 = 8;
+    const CONTENT_H: u16 = BIG_H + 1 + 1; // big text + blank + version
+
+    let block = Block::bordered().border_style(Style::new().fg(Color::DarkGray));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    // Centre the content block vertically.
+    let [_, content, _] = Layout::vertical([
+        Constraint::Min(0),
+        Constraint::Length(CONTENT_H),
+        Constraint::Min(0),
+    ])
+    .areas(inner);
+
+    let [big_area, _, version_area] = Layout::vertical([
+        Constraint::Length(BIG_H),
+        Constraint::Length(1),
+        Constraint::Length(1),
+    ])
+    .areas(content);
+
+    let big_text = BigText::builder()
+        .pixel_size(PixelSize::HalfHeight)
+        .centered()
+        .lines(vec![
+            "LIGHT".white().bold().into(),
+            "CRAZY".cyan().bold().into(),
+        ])
+        .build();
+    frame.render_widget(big_text, big_area);
+
+    // App version from Cargo.toml, centred below the big text.
+    let version = format!("v{}", env!("CARGO_PKG_VERSION"));
+    frame.render_widget(
+        Paragraph::new(version)
+            .style(Style::new().fg(Color::DarkGray))
+            .centered(),
+        version_area,
     );
 }
 
