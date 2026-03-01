@@ -64,14 +64,32 @@ impl BatteryWorker {
             let poll_interval = Duration::from_secs(interval_secs);
             let tick = Duration::from_millis(200);
             let mut accumulated = Duration::ZERO;
+            // Backoff used when the device has re-enumerated. We sleep for a
+            // few seconds to give the kernel time to stabilise the new hidraw
+            // node before attempting another HID read. During this window the
+            // tray icon will simply show the last known battery level.
+            let mut backoff_remaining = Duration::ZERO;
+            const REENUMERATION_BACKOFF: Duration = Duration::from_secs(5);
 
             while running_clone.load(Ordering::Acquire) {
                 thread::sleep(tick);
+
+                if backoff_remaining > Duration::ZERO {
+                    backoff_remaining = backoff_remaining.saturating_sub(tick);
+                    continue;
+                }
+
                 accumulated += tick;
 
                 if accumulated >= poll_interval {
                     accumulated = Duration::ZERO;
-                    poll_battery(&device, &tx);
+                    if poll_battery(&device, &tx) == PollOutcome::DeviceGone {
+                        info!(
+                            "Worker: backing off {}s after device re-enumeration",
+                            REENUMERATION_BACKOFF.as_secs()
+                        );
+                        backoff_remaining = REENUMERATION_BACKOFF;
+                    }
                 }
             }
 
@@ -82,13 +100,24 @@ impl BatteryWorker {
     }
 }
 
+/// Return value from poll_battery indicating whether the device appears to
+/// have disconnected (re-enumerated) and we should back off.
+#[derive(PartialEq)]
+enum PollOutcome {
+    Ok,
+    Busy,
+    /// HID error that likely indicates the device has re-enumerated.
+    /// The caller should wait before retrying to let the kernel stabilise.
+    DeviceGone,
+}
+
 // Attempt a battery read using the shared device handle.
 //
-// Uses "try_lock()": if the UI thread currently holds the mutex (e.g. it is
-// mid-way through sending a DPI command), the poll is skipped. The next
-// scheduled poll will try again. This prevents the ~2s battery init sequence
-// from blocking user interactions.
-fn poll_battery(device: &Arc<Mutex<Device>>, tx: &mpsc::Sender<BatteryUpdate>) {
+// Uses "try_lock()": if the UI thread currently holds the mutex, the poll is
+// skipped. Returns DeviceGone when the read fails in a way that suggests the
+// dongle has re-enumerated (which happens whenever the mouse enters or exits
+// charging mode via any USB connection, even an external power supply).
+fn poll_battery(device: &Arc<Mutex<Device>>, tx: &mpsc::Sender<BatteryUpdate>) -> PollOutcome {
     match device.try_lock() {
         Ok(dev) => match protocol::get_mouse_battery(&dev) {
             Ok(status) => {
@@ -97,14 +126,30 @@ fn poll_battery(device: &Arc<Mutex<Device>>, tx: &mpsc::Sender<BatteryUpdate>) {
                     status.battery_level,
                     if status.is_charging { " ⚡" } else { "" }
                 );
-                // Receiver gone means the TUI closed, the thread will exit on the next
-                // Ordering::Acquire check anyway, so just silently ignore the error.
+                // Receiver gone means the TUI closed — silently ignore.
                 let _ = tx.send(BatteryUpdate { status });
+                PollOutcome::Ok
             }
-            Err(e) => warn!("Worker: battery read failed: {}", e),
+            Err(e) => {
+                let msg = e.to_string();
+                // "No such device", "I/O error", or "HID read failed" after
+                // the dongle re-enumerates will appear here.
+                if msg.contains("No such device")
+                    || msg.contains("I/O error")
+                    || msg.contains("HID read failed")
+                    || msg.contains("Read timeout")
+                {
+                    warn!("Worker: device appears to have re-enumerated: {}", e);
+                    PollOutcome::DeviceGone
+                } else {
+                    warn!("Worker: battery read failed: {}", e);
+                    PollOutcome::Ok
+                }
+            }
         },
         Err(_) => {
             info!("Worker: device busy (UI command in progress) — skipping poll");
+            PollOutcome::Busy
         }
     }
 }
