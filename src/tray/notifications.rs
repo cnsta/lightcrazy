@@ -75,3 +75,72 @@ impl Default for NotificationState {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Charging at any level must never notify, even below threshold.
+    #[test]
+    fn not_notified_when_charging() {
+        let s = NotificationState::new();
+        assert!(!s.should_notify_low_battery(5, 10, 20, true));
+        assert!(!s.should_notify_low_battery(15, 20, 20, true));
+    }
+
+    /// Above the threshold must never notify, regardless of trend.
+    #[test]
+    fn not_notified_above_threshold() {
+        let s = NotificationState::new();
+        assert!(!s.should_notify_low_battery(50, 60, 20, false));
+        assert!(!s.should_notify_low_battery(21, 22, 20, false));
+    }
+
+    /// Equal-to-previous reading is "no change" and must not notify.
+    /// Otherwise the user would get spammed every poll while the level
+    /// sat at the threshold.
+    #[test]
+    fn not_notified_when_level_unchanged() {
+        let s = NotificationState::new();
+        assert!(!s.should_notify_low_battery(15, 15, 20, false));
+    }
+
+    /// Level *rose* (the mouse was put on a wireless charging pad, then off,
+    /// or the dongle re-enumerated and the new read happened to be higher).
+    /// Must not notify, the situation is improving, not worsening.
+    #[test]
+    fn not_notified_when_level_rose() {
+        let s = NotificationState::new();
+        assert!(!s.should_notify_low_battery(16, 15, 20, false));
+    }
+
+    /// First time we see a drop below threshold: notify.
+    #[test]
+    fn notified_on_fresh_drop_below_threshold() {
+        let s = NotificationState::new();
+        assert!(s.should_notify_low_battery(15, 16, 20, false));
+        assert!(s.should_notify_low_battery(19, 20, 20, false));
+    }
+
+    /// After a notification has been sent, the cooldown window suppresses
+    /// repeats. We can't fast-forward time in tests, so we instead set
+    /// `last_low_battery` to "now" and verify the next call returns false.
+    #[test]
+    fn cooldown_suppresses_repeat() {
+        let mut s = NotificationState::new();
+        s.last_low_battery = Some(Instant::now());
+        // A genuine drop below threshold that *would* notify if the cooldown
+        // weren't active.
+        assert!(!s.should_notify_low_battery(10, 15, 20, false));
+    }
+
+    /// Cooldown expired: a fresh drop notifies again. Simulated by setting
+    /// the timestamp to longer than COOLDOWN_SECS ago.
+    #[test]
+    fn cooldown_expires() {
+        let mut s = NotificationState::new();
+        s.last_low_battery =
+            Some(Instant::now() - std::time::Duration::from_secs(COOLDOWN_SECS + 1));
+        assert!(s.should_notify_low_battery(10, 15, 20, false));
+    }
+}
