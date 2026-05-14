@@ -174,7 +174,6 @@ fn worker_loop(config: WorkerConfig, running: Arc<AtomicBool>, tx: mpsc::Sender<
         let manual_refresh = refresh_flag.swap(false, Ordering::AcqRel);
 
         if manual_refresh {
-            accumulated = Duration::ZERO;
             backoff_remaining = Duration::ZERO;
         } else if backoff_remaining > Duration::ZERO {
             backoff_remaining = backoff_remaining.saturating_sub(TICK);
