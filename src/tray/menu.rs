@@ -1,11 +1,11 @@
 use ksni::{menu::StandardItem, Icon, MenuItem, OfflineReason, ToolTip, Tray};
 use log::{error, info, warn};
-use std::sync::{Arc, Mutex};
-
-use crate::{
-    device::{protocol, transport::Device},
-    tray::notifications::NotificationState,
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
 };
+
+use crate::tray::notifications::NotificationState;
 
 #[derive(Debug, Clone)]
 pub struct BatteryContext {
@@ -27,45 +27,10 @@ impl Default for BatteryContext {
 
 pub struct BatteryTray {
     pub ctx: Arc<Mutex<BatteryContext>>,
+    pub refresh_flag: Arc<AtomicBool>,
 }
 
 impl BatteryTray {
-    pub fn update_battery(&self) -> anyhow::Result<()> {
-        let dev = Device::open()?;
-        let status = protocol::get_mouse_battery(&dev)?;
-
-        // Read threshold from settings each poll so changes made in the TUI
-        // take effect without restarting the tray service.
-        let threshold = crate::settings::Settings::load().notification_threshold;
-
-        let mut ctx = self.ctx.lock().unwrap();
-
-        // Previous level for hysteresis, treat "no prior reading" as 100%
-        // so we don't fire a low-battery alert on the very first read.
-        let old_level = ctx.battery.map(|(l, _)| l).unwrap_or(100);
-
-        ctx.battery = Some((status.battery_level, status.is_charging));
-
-        info!(
-            "Battery: {}%{}",
-            status.battery_level,
-            if status.is_charging { " ⚡" } else { "" }
-        );
-
-        let should_notify = ctx.notifications.should_notify_low_battery(
-            status.battery_level,
-            old_level,
-            threshold,
-            status.is_charging,
-        );
-
-        if should_notify {
-            ctx.notifications.send_low_battery(status.battery_level)?;
-        }
-
-        Ok(())
-    }
-
     /// Spawn this binary with `--options` in a terminal emulator.
     ///
     /// Resolution order:
@@ -362,9 +327,12 @@ impl Tray for BatteryTray {
                 label: "Refresh Now".into(),
                 icon_name: "view-refresh-symbolic".into(),
                 activate: Box::new(|this: &mut Self| {
-                    if let Err(e) = this.update_battery() {
-                        error!("Failed to refresh battery: {}", e);
-                    }
+                    // Signal the battery worker to poll on its next tick.
+                    // The worker handles all the actual reading, we just
+                    // wake it. Release ordering pairs with the workers
+                    // AcqRel swap.
+                    this.refresh_flag.store(true, Ordering::Release);
+                    info!("Refresh requested via tray menu");
                 }),
                 ..Default::default()
             }
