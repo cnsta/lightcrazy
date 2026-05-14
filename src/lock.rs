@@ -29,13 +29,16 @@ pub fn acquire_ui_lock() -> anyhow::Result<LockGuard> {
 
 // Acquire the device access lock (blocking).
 //
-// Held during any HID protocol exchange that must be atomic, specifically,
-// the tray's battery poll and the TUI's startup initialization. Unlike the
 // other locks, this one blocks until the lock is available rather than
 // failing immediately, so callers can use it to wait for an in-progress
 // operation to complete.
 pub fn acquire_device_lock() -> anyhow::Result<LockGuard> {
     try_acquire_blocking("lightcrazy-device")
+}
+
+// Acquire the device access lock (non-blocking).
+pub fn try_acquire_device_lock() -> anyhow::Result<LockGuard> {
+    try_acquire_nonblock("lightcrazy-device")
 }
 
 // Returns true if the tray is already running in another process.

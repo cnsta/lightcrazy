@@ -21,7 +21,7 @@ use tui_slider::SliderState;
 use crate::device::{
     protocol::{self, LiftOffDistance, PollingRate},
     transport::Device,
-    worker::BatteryWorker,
+    BatteryEvent, BatteryWorker, DeviceSource, WorkerConfig,
 };
 use crate::settings::{Settings, INTERVAL_OPTIONS};
 
@@ -119,7 +119,7 @@ pub struct App {
     pub throbber_state: ThrobberState,
 
     _worker: Option<BatteryWorker>,
-    battery_rx: Option<std::sync::mpsc::Receiver<crate::device::worker::BatteryUpdate>>,
+    battery_rx: Option<std::sync::mpsc::Receiver<BatteryEvent>>,
 }
 
 impl App {
@@ -144,7 +144,20 @@ impl App {
 
         let battery_loading = device.is_some();
         let interval = settings.battery_interval_secs;
-        let (worker, battery_rx) = BatteryWorker::spawn(interval, device.clone());
+
+        // Only spawn the worker if we actually have a device. With no device,
+        // the TUI just shows "no battery data" and there's nothing to poll.
+        let (worker, battery_rx) = if let Some(ref dev_arc) = device {
+            let (w, rx) = BatteryWorker::spawn(WorkerConfig {
+                interval: Duration::from_secs(interval),
+                disconnect_backoff: Duration::from_secs(5),
+                device_source: DeviceSource::Shared(dev_arc.clone()),
+                refresh_flag: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            });
+            (Some(w), Some(rx))
+        } else {
+            (None, None)
+        };
 
         let dpi_idx = DPI_VALUES.iter().position(|&d| d == dpi).unwrap_or(2);
         let polling_idx = POLLING_RATES
@@ -174,8 +187,8 @@ impl App {
             status_msg: None,
             should_quit: false,
             throbber_state: ThrobberState::default(),
-            _worker: Some(worker),
-            battery_rx: Some(battery_rx),
+            _worker: worker,
+            battery_rx,
         }
     }
 
@@ -185,9 +198,16 @@ impl App {
 
     pub fn tick(&mut self) {
         if let Some(ref rx) = self.battery_rx {
-            while let Ok(update) = rx.try_recv() {
-                self.battery = Some(update.status);
-                self.battery_loading = false;
+            while let Ok(event) = rx.try_recv() {
+                match event {
+                    BatteryEvent::Update(status) => {
+                        self.battery = Some(status);
+                        self.battery_loading = false;
+                    }
+                    BatteryEvent::Asleep | BatteryEvent::Disconnected => {
+                        self.battery_loading = false;
+                    }
+                }
             }
         }
         if self.battery_loading {
