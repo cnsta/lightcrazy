@@ -1,6 +1,7 @@
 use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
+        mpsc::RecvTimeoutError,
         Arc, Mutex,
     },
     thread,
@@ -11,7 +12,10 @@ use anyhow::Context;
 use ksni::blocking::TrayMethods;
 use log::{error, info, warn};
 
-use crate::tray::menu::{BatteryContext, BatteryTray};
+use crate::{
+    device::{BatteryEvent, BatteryWorker, DeviceSource, WorkerConfig},
+    tray::menu::{BatteryContext, BatteryTray},
+};
 
 static NEEDS_RESPAWN: AtomicBool = AtomicBool::new(false);
 
@@ -33,11 +37,16 @@ impl Drop for TrayServiceHandle {
 pub fn start_tray_background() -> anyhow::Result<TrayServiceHandle> {
     info!("Starting lightcrazy tray in background");
 
-    let (ctx, handle) = init_tray()?;
+    let (ctx, refresh_flag, handle) = init_tray()?;
     let running = Arc::new(AtomicBool::new(true));
 
-    start_battery_monitor(ctx.clone(), running.clone(), handle.clone());
-    start_tray_watchdog(ctx, running.clone(), handle);
+    start_battery_event_consumer(
+        ctx.clone(),
+        refresh_flag.clone(),
+        running.clone(),
+        handle.clone(),
+    );
+    start_tray_watchdog(ctx, refresh_flag, running.clone(), handle);
 
     Ok(TrayServiceHandle { running })
 }
@@ -45,7 +54,7 @@ pub fn start_tray_background() -> anyhow::Result<TrayServiceHandle> {
 pub fn start_tray_service() -> anyhow::Result<()> {
     info!("Starting lightcrazy battery tray service");
 
-    let (ctx, handle) = init_tray()?;
+    let (ctx, refresh_flag, handle) = init_tray()?;
     let running = Arc::new(AtomicBool::new(true));
 
     {
@@ -57,8 +66,13 @@ pub fn start_tray_service() -> anyhow::Result<()> {
         .context("Failed to set signal handler")?;
     }
 
-    start_battery_monitor(ctx.clone(), running.clone(), handle.clone());
-    start_tray_watchdog(ctx, running.clone(), handle);
+    start_battery_event_consumer(
+        ctx.clone(),
+        refresh_flag.clone(),
+        running.clone(),
+        handle.clone(),
+    );
+    start_tray_watchdog(ctx, refresh_flag, running.clone(), handle);
 
     while running.load(Ordering::Acquire) {
         thread::sleep(Duration::from_millis(100));
@@ -71,16 +85,6 @@ pub fn start_tray_service() -> anyhow::Result<()> {
 /// Block until `org.kde.StatusNotifierWatcher` is present on the session bus,
 /// or until `timeout` elapses. Called before every `spawn()` so that
 /// `RegisterStatusNotifierItem` is never sent before anything is listening.
-///
-/// Without this, apps that start before the bar's SNI watcher is ready send
-/// their registration into the void: the call returns no error but the watcher
-/// never records the item, `watcher_offline` is never called (we were never
-/// online to begin with), and the icon silently doesn't appear.
-///
-/// Note: ksni's `watcher_online` callback only fires when the watcher comes
-/// back *after* being offline, it does not fire on a clean first registration
-/// where the watcher was already running, so it cannot be used to detect this
-/// race after the fact.
 fn wait_for_watcher(timeout: Duration) {
     use zbus::blocking::Connection;
 
@@ -109,7 +113,8 @@ fn wait_for_watcher(timeout: Duration) {
         }
         if start.elapsed() >= timeout {
             warn!(
-                "StatusNotifierWatcher not available after {}s — proceeding anyway;                  watcher_offline/respawn will handle it if the tray does not register",
+                "StatusNotifierWatcher not available after {}s — proceeding anyway; \
+                 watcher_offline/respawn will handle it if the tray does not register",
                 timeout.as_secs()
             );
             return;
@@ -118,110 +123,124 @@ fn wait_for_watcher(timeout: Duration) {
     }
 }
 
+/// Initialise the tray icon. Returns the shared battery context, the
+/// refresh-request flag (consumed by the worker), and the ksni handle.
+///
+/// The refresh_flag is created here so it can be shared between the tray
+/// (whose Refresh Now menu sets it) and the worker (which clears it).
 fn init_tray() -> anyhow::Result<(
     Arc<Mutex<BatteryContext>>,
+    Arc<AtomicBool>,
     ksni::blocking::Handle<BatteryTray>,
 )> {
     // Wait for the SNI watcher before spawning so RegisterStatusNotifierItem
-    // is never issued before anything is listening. The wait returns immediately
-    // if the watcher is already up (the common case), so there is no cost on a
-    // healthy boot. 30s covers even very slow graphical-session startups.
+    // is never issued before anything is listening.
     wait_for_watcher(Duration::from_secs(30));
 
     let ctx = Arc::new(Mutex::new(BatteryContext::default()));
+    let refresh_flag = Arc::new(AtomicBool::new(false));
 
     // No blocking read here, the device/dongle is often not ready at
-    // graphical-session.target time. The monitor thread handles the initial
-    // read with short-interval retries so startup is never delayed.
-    let tray = BatteryTray { ctx: ctx.clone() };
+    // graphical-session.target time.
+    let tray = BatteryTray {
+        ctx: ctx.clone(),
+        refresh_flag: refresh_flag.clone(),
+    };
     let handle = tray.spawn().context("Failed to spawn tray icon")?;
 
     info!("Tray icon spawned successfully");
-    Ok((ctx, handle))
+    Ok((ctx, refresh_flag, handle))
 }
 
-/// Background thread that periodically reads battery and updates the tray icon.
-fn start_battery_monitor(
+/// Spawn the unified battery worker (owned-device mode) and a thread that
+/// translates `BatteryEvent`s into tray-context updates and notifications.
+fn start_battery_event_consumer(
     ctx: Arc<Mutex<BatteryContext>>,
+    refresh_flag: Arc<AtomicBool>,
     running: Arc<AtomicBool>,
     handle: ksni::blocking::Handle<BatteryTray>,
 ) {
-    const STARTUP_RETRY_SECS: u64 = 5;
-
-    // Read interval from settings so any change made in the TUI takes
-    // effect on the next tray restart (interval is captured once per session).
     let interval_secs = crate::settings::Settings::load().battery_interval_secs;
+    info!("Battery monitoring: checking every {}s", interval_secs);
 
-    info!(
-        "Battery monitoring: checking every {}s (startup retry every {}s)",
-        interval_secs, STARTUP_RETRY_SECS
-    );
+    let config = WorkerConfig {
+        interval: Duration::from_secs(interval_secs),
+        disconnect_backoff: Duration::from_secs(5),
+        device_source: DeviceSource::Owned,
+        refresh_flag,
+    };
 
     thread::spawn(move || {
-        let mut initial_read_done = false;
+        let (worker, events) = BatteryWorker::spawn(config);
+        // Hold the worker alive for the lifetime of this thread. Its Drop
+        // joins the worker thread, so it must stay in scope until we exit.
+        let _worker_guard = worker;
 
         while running.load(Ordering::Acquire) {
-            // Startup phase: short retries until we have one successful read.
-            // Normal phase: long interval between polls.
-            let sleep_secs = if initial_read_done {
-                interval_secs
-            } else {
-                STARTUP_RETRY_SECS
-            };
-            thread::sleep(Duration::from_secs(sleep_secs));
-
-            if !running.load(Ordering::Acquire) {
-                break;
-            }
-
-            if crate::lock::ui_is_active() {
-                info!("TUI active, skipping battery poll");
-                continue;
-            }
-
-            let _dev_lock = match crate::lock::acquire_device_lock() {
-                Ok(lock) => lock,
-                Err(e) => {
-                    warn!("Could not acquire device lock for battery poll: {}", e);
-                    continue;
+            // 500ms timeout so we re-check `running` reasonably often even
+            // when the worker is idle (e.g. mouse asleep for hours).
+            match events.recv_timeout(Duration::from_millis(500)) {
+                Ok(BatteryEvent::Update(status)) => {
+                    handle_battery_update(&ctx, &handle, status);
                 }
-            };
-
-            let tray = BatteryTray { ctx: ctx.clone() };
-            match tray.update_battery() {
-                Ok(()) => {
-                    // Notify the ksni service that properties have changed so it
-                    // pushes updated icon, tooltip, and menu to the host immediately.
-                    // Without this call, the host sees no change signal and keeps
-                    // displaying whatever it cached at spawn time.
-                    handle.update(|_| {});
-
-                    if !initial_read_done {
-                        info!(
-                            "Initial battery read succeeded, switching to {}s interval",
-                            interval_secs
-                        );
-                        initial_read_done = true;
-                    }
+                Ok(BatteryEvent::Asleep) => {
+                    log::debug!("Mouse asleep");
                 }
-                Err(e) => {
-                    if initial_read_done {
-                        warn!("Battery update failed: {}", e);
-                    } else {
-                        info!(
-                            "Startup battery read not ready yet ({}), retrying in {}s",
-                            e, STARTUP_RETRY_SECS
-                        );
-                    }
+                Ok(BatteryEvent::Disconnected) => {
+                    info!("Device unreachable; waiting for it to come back");
+                }
+                Err(RecvTimeoutError::Timeout) => continue,
+                Err(RecvTimeoutError::Disconnected) => {
+                    warn!("Battery worker channel closed; consumer exiting");
+                    break;
                 }
             }
         }
-        info!("Battery monitoring thread exiting");
+        info!("Battery event consumer thread exiting");
     });
+}
+
+/// Apply a successful battery reading to the tray context and fire a
+/// notification if the threshold was crossed.
+fn handle_battery_update(
+    ctx: &Arc<Mutex<BatteryContext>>,
+    handle: &ksni::blocking::Handle<BatteryTray>,
+    status: crate::device::MouseStatus,
+) {
+    let threshold = crate::settings::Settings::load().notification_threshold;
+
+    info!(
+        "Battery: {}%{}",
+        status.battery_level,
+        if status.is_charging { " ⚡" } else { "" }
+    );
+
+    let (should_notify, level) = {
+        let mut ctx_g = ctx.lock().unwrap();
+        let old_level = ctx_g.battery.map(|(l, _)| l).unwrap_or(100);
+        ctx_g.battery = Some((status.battery_level, status.is_charging));
+        let should = ctx_g.notifications.should_notify_low_battery(
+            status.battery_level,
+            old_level,
+            threshold,
+            status.is_charging,
+        );
+        (should, status.battery_level)
+    };
+
+    if should_notify {
+        let mut ctx_g = ctx.lock().unwrap();
+        if let Err(e) = ctx_g.notifications.send_low_battery(level) {
+            warn!("Failed to send low-battery notification: {}", e);
+        }
+    }
+
+    handle.update(|_| {});
 }
 
 fn start_tray_watchdog(
     ctx: Arc<Mutex<BatteryContext>>,
+    refresh_flag: Arc<AtomicBool>,
     running: Arc<AtomicBool>,
     initial_handle: ksni::blocking::Handle<BatteryTray>,
 ) {
@@ -234,12 +253,12 @@ fn start_tray_watchdog(
                 info!("Tray disconnected, attempting respawn...");
                 NEEDS_RESPAWN.store(false, Ordering::Release);
 
-                // Wait for the watcher before re-registering. If the bar
-                // restarted and took its watcher down with it, spawning
-                // before it re-advertises drops the registration silently.
                 wait_for_watcher(Duration::from_secs(30));
 
-                let tray = BatteryTray { ctx: ctx.clone() };
+                let tray = BatteryTray {
+                    ctx: ctx.clone(),
+                    refresh_flag: refresh_flag.clone(),
+                };
                 match tray.spawn() {
                     Ok(new_handle) => {
                         info!("Successfully respawned tray");
