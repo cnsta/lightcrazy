@@ -38,12 +38,12 @@ in
       # TAG+="uaccess" makes logind grant seat-local access automatically.
       services.udev.extraRules = ''
         # Pulsar X2 CrazyLight (wired)
-        SUBSYSTEM=="usb",  ATTRS{idVendor}=="3710", ATTRS{idProduct}=="3414", MODE="0666", TAG+="uaccess"
+        SUBSYSTEM=="usb",  ATTRS{idVendor}=="3710", ATTRS{idProduct}=="3414", TAG+="uaccess"
         # Pulsar 8K Dongle (wireless)
-        SUBSYSTEM=="usb",  ATTRS{idVendor}=="3710", ATTRS{idProduct}=="5406", MODE="0666", TAG+="uaccess"
+        SUBSYSTEM=="usb",  ATTRS{idVendor}=="3710", ATTRS{idProduct}=="5406", TAG+="uaccess"
         # hidraw nodes — required for non-root HID access via hidapi
-        KERNEL=="hidraw*", ATTRS{idVendor}=="3710", ATTRS{idProduct}=="3414", MODE="0666", TAG+="uaccess"
-        KERNEL=="hidraw*", ATTRS{idVendor}=="3710", ATTRS{idProduct}=="5406", MODE="0666", TAG+="uaccess"
+        KERNEL=="hidraw*", ATTRS{idVendor}=="3710", ATTRS{idProduct}=="3414", TAG+="uaccess"
+        KERNEL=="hidraw*", ATTRS{idVendor}=="3710", ATTRS{idProduct}=="5406", TAG+="uaccess"
         # Interface 0, presented as a mouse; suppress keyboard classification
         SUBSYSTEM=="input", ATTRS{idVendor}=="3710", ATTRS{idProduct}=="5406", ATTRS{bInterfaceNumber}=="00", ENV{ID_INPUT_KEYBOARD}="0", ENV{ID_INPUT_KEY}="0"
         # Interface 2, presented as a keyboard/consumer control; suppress entirely
