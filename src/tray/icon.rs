@@ -18,6 +18,7 @@ pub fn get_pixmaps(level: u8, is_charging: bool) -> Vec<ksni::Icon> {
         embedded_to_ksni(get_icon(level, is_charging, 16)),
         embedded_to_ksni(get_icon(level, is_charging, 22)),
         embedded_to_ksni(get_icon(level, is_charging, 32)),
+        embedded_to_ksni(get_icon(level, is_charging, 48)),
     ]
 }
 

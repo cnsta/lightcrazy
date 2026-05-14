@@ -142,35 +142,64 @@ pub fn get_firmware(device: &Device) -> Result<String> {
     Ok(device.firmware_version().to_string())
 }
 
-fn read_cmd(device: &Device, expected_cmd: u8, timeout_ms: i32) -> Result<Option<Vec<u8>>> {
+#[derive(Debug)]
+pub enum BatteryReadError {
+    Asleep,
+    Io(anyhow::Error),
+}
+
+impl std::fmt::Display for BatteryReadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BatteryReadError::Asleep => {
+                write!(f, "Mouse asleep (no reply to battery request)")
+            }
+            BatteryReadError::Io(e) => write!(f, "{}", e),
+        }
+    }
+}
+
+impl std::error::Error for BatteryReadError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            BatteryReadError::Asleep => None,
+            BatteryReadError::Io(e) => e.source(),
+        }
+    }
+}
+
+impl From<anyhow::Error> for BatteryReadError {
+    fn from(e: anyhow::Error) -> Self {
+        BatteryReadError::Io(e)
+    }
+}
+
+fn read_cmd(device: &Device, expected_cmd: u8, timeout_ms: i32) -> Option<Vec<u8>> {
     let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms as u64);
 
     while std::time::Instant::now() < deadline {
         match device.read_interrupt(250) {
             Ok(data) => {
-                if data.len() < 7 || data[0] != 0x08 {
+                if data.len() < 7 || data[0] != 0x08 || data[1] != expected_cmd {
                     continue;
                 }
-
-                if data[1] != expected_cmd {
-                    continue;
-                }
-
-                return Ok(Some(data));
+                return Some(data);
             }
             Err(_) => continue,
         }
     }
 
-    Ok(None)
+    None
 }
 
-pub fn get_mouse_battery(device: &Device) -> Result<MouseStatus> {
+pub fn get_mouse_battery(device: &Device) -> std::result::Result<MouseStatus, BatteryReadError> {
     device.drain_input(6);
 
-    device.write_output(&CMD04_PACKET)?;
+    device
+        .write_output(&CMD04_PACKET)
+        .map_err(BatteryReadError::Io)?;
 
-    if let Some(payload) = read_cmd(device, 0x04, 800)? {
+    if let Some(payload) = read_cmd(device, 0x04, 800) {
         return Ok(MouseStatus {
             battery_level: payload[6],
             is_charging: payload[7] != 0,
@@ -178,18 +207,18 @@ pub fn get_mouse_battery(device: &Device) -> Result<MouseStatus> {
     }
 
     for pkt in &CMD04_INIT_SEQUENCE {
-        device.write_output(pkt)?;
+        device.write_output(pkt).map_err(BatteryReadError::Io)?;
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
 
-    if let Some(payload) = read_cmd(device, 0x04, 2000)? {
+    if let Some(payload) = read_cmd(device, 0x04, 2000) {
         return Ok(MouseStatus {
             battery_level: payload[6],
             is_charging: payload[7] != 0,
         });
     }
 
-    anyhow::bail!("Failed to read battery after init sequence")
+    Err(BatteryReadError::Asleep)
 }
 
 pub fn query_current_stage(device: &Device) -> Result<u8> {
