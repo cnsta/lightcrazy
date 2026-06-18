@@ -9,11 +9,11 @@ fn main() -> anyhow::Result<()> {
         // don't bleed through into the raw-mode terminal.
         init_file_logger();
 
-        let _tray_lock = if !tray_is_running() {
+        let _tray_guards = if !tray_is_running() {
             info!("No tray running — starting tray in background");
             let lock = acquire_tray_lock()?;
-            lightcrazy::tray::start_tray_background()?;
-            Some(lock)
+            let service = lightcrazy::tray::start_tray_background()?;
+            Some((lock, service))
         } else {
             info!("Tray already running — attaching TUI");
             None

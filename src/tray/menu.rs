@@ -176,65 +176,36 @@ fn find_terminal_in_nix_profiles(skip: &[&str]) -> Option<String> {
 }
 
 fn try_launch_in_terminal(terminal: &str, bin: &str, extra_args: &[&str]) -> bool {
-    use std::process::Command;
+    use std::os::unix::process::CommandExt;
+    use std::process::{Command, Stdio};
 
-    // Each emulator has its own flag for setting the WM_CLASS / app-id.
-    // Setting this lets window managers match lightcrazy with window rules
-    // independently of which terminal is used.
-    // The window title is set from inside the TUI via OSC 0 escape sequences.
-    let result = match terminal {
-        "alacritty" => Command::new("alacritty")
-            .args(["--class", "lightcrazy,lightcrazy", "-e"])
-            .arg(bin)
-            .args(extra_args)
-            .spawn(),
-        "kitty" => Command::new("kitty")
-            .args(["--class", "lightcrazy", "-e"])
-            .arg(bin)
-            .args(extra_args)
-            .spawn(),
-        "foot" => Command::new("foot")
-            .args(["--app-id=lightcrazy"])
-            .arg(bin)
-            .args(extra_args)
-            .spawn(),
-        "ghostty" => Command::new("ghostty")
-            .args(["--class=lightcrazy", "-e"])
-            .arg(bin)
-            .args(extra_args)
-            .spawn(),
-        "wezterm" => Command::new("wezterm")
-            .args(["start", "--class", "lightcrazy", "--"])
-            .arg(bin)
-            .args(extra_args)
-            .spawn(),
-        "konsole" => Command::new("konsole")
-            .args(["--name", "lightcrazy", "-e"])
-            .arg(bin)
-            .args(extra_args)
-            .spawn(),
-        "gnome-terminal" => Command::new("gnome-terminal")
-            .args(["--class=lightcrazy", "--"])
-            .arg(bin)
-            .args(extra_args)
-            .spawn(),
-        "xterm" => Command::new("xterm")
-            .args(["-class", "lightcrazy", "-e"])
-            .arg(bin)
-            .args(extra_args)
-            .spawn(),
-        // Absolute-path entries (from find_terminal_in_nix_profiles) and any
-        // unknown terminal: fall back to -e without a class flag.
-        other => Command::new(other)
-            .arg("-e")
-            .arg(bin)
-            .args(extra_args)
-            .spawn(),
+    let (program, prefix): (&str, &[&str]) = match terminal {
+        "alacritty" => ("alacritty", &["--class", "lightcrazy,lightcrazy", "-e"]),
+        "kitty" => ("kitty", &["--class", "lightcrazy", "-e"]),
+        "foot" => ("foot", &["--app-id=lightcrazy"]),
+        "ghostty" => ("ghostty", &["--class=lightcrazy", "-e"]),
+        "wezterm" => ("wezterm", &["start", "--class", "lightcrazy", "--"]),
+        "konsole" => ("konsole", &["--name", "lightcrazy", "-e"]),
+        "gnome-terminal" => ("gnome-terminal", &["--class=lightcrazy", "--"]),
+        "xterm" => ("xterm", &["-class", "lightcrazy", "-e"]),
+        other => (other, &["-e"]),
     };
 
-    match result {
-        Ok(_) => {
+    let mut cmd = Command::new(program);
+    cmd.args(prefix).arg(bin).args(extra_args);
+
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .process_group(0);
+
+    match cmd.spawn() {
+        Ok(child) => {
             info!("Launched {} {} in {}", bin, extra_args.join(" "), terminal);
+            std::thread::spawn(move || {
+                let mut child = child;
+                let _ = child.wait();
+            });
             true
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
