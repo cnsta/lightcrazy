@@ -354,9 +354,8 @@ impl Tray for BatteryTray {
         info!("Tray watcher online");
     }
 
-    fn watcher_offline(&self, reason: OfflineReason) -> bool {
-        warn!("Tray watcher offline: {:?}", reason);
-        crate::tray::utils::signal_respawn_needed();
-        false
+    fn watcher_offline(&self, _reason: OfflineReason) -> bool {
+        warn!("Tray watcher offline; keeping service alive, ksni will re-register");
+        true
     }
 }

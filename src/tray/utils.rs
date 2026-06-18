@@ -10,18 +10,12 @@ use std::{
 
 use anyhow::Context;
 use ksni::blocking::TrayMethods;
-use log::{error, info, warn};
+use log::{info, warn};
 
 use crate::{
     device::{BatteryEvent, BatteryWorker, DeviceSource, WorkerConfig},
     tray::menu::{BatteryContext, BatteryTray},
 };
-
-static NEEDS_RESPAWN: AtomicBool = AtomicBool::new(false);
-
-pub fn signal_respawn_needed() {
-    NEEDS_RESPAWN.store(true, Ordering::Release);
-}
 
 pub struct TrayServiceHandle {
     running: Arc<AtomicBool>,
@@ -46,7 +40,6 @@ pub fn start_tray_background() -> anyhow::Result<TrayServiceHandle> {
         running.clone(),
         handle.clone(),
     );
-    start_tray_watchdog(ctx, refresh_flag, running.clone(), handle);
 
     Ok(TrayServiceHandle { running })
 }
@@ -72,7 +65,6 @@ pub fn start_tray_service() -> anyhow::Result<()> {
         running.clone(),
         handle.clone(),
     );
-    start_tray_watchdog(ctx, refresh_flag, running.clone(), handle);
 
     while running.load(Ordering::Acquire) {
         thread::sleep(Duration::from_millis(100));
@@ -146,7 +138,10 @@ fn init_tray() -> anyhow::Result<(
         ctx: ctx.clone(),
         refresh_flag: refresh_flag.clone(),
     };
-    let handle = tray.spawn().context("Failed to spawn tray icon")?;
+    let handle = tray
+        .assume_sni_available(true)
+        .spawn()
+        .context("Failed to spawn tray icon")?;
 
     info!("Tray icon spawned successfully");
     Ok((ctx, refresh_flag, handle))
@@ -236,48 +231,4 @@ fn handle_battery_update(
     }
 
     handle.update(|_| {});
-}
-
-fn start_tray_watchdog(
-    ctx: Arc<Mutex<BatteryContext>>,
-    refresh_flag: Arc<AtomicBool>,
-    running: Arc<AtomicBool>,
-    initial_handle: ksni::blocking::Handle<BatteryTray>,
-) {
-    thread::spawn(move || {
-        let mut consecutive_failures = 0u32;
-        let mut handle = Some(initial_handle);
-
-        while running.load(Ordering::Acquire) {
-            if NEEDS_RESPAWN.load(Ordering::Acquire) || handle.is_none() {
-                info!("Tray disconnected, attempting respawn...");
-                NEEDS_RESPAWN.store(false, Ordering::Release);
-
-                wait_for_watcher(Duration::from_secs(30));
-
-                let tray = BatteryTray {
-                    ctx: ctx.clone(),
-                    refresh_flag: refresh_flag.clone(),
-                };
-                match tray.spawn() {
-                    Ok(new_handle) => {
-                        info!("Successfully respawned tray");
-                        handle = Some(new_handle);
-                        consecutive_failures = 0;
-                    }
-                    Err(e) => {
-                        consecutive_failures += 1;
-                        error!(
-                            "Failed to respawn tray (attempt {}): {}",
-                            consecutive_failures, e
-                        );
-                        let delay = (2_u64.pow(consecutive_failures.min(4))).min(30);
-                        thread::sleep(Duration::from_secs(delay));
-                    }
-                }
-            }
-            thread::sleep(Duration::from_secs(2));
-        }
-        info!("Tray watchdog thread exiting");
-    });
 }
