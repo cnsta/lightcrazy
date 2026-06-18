@@ -22,6 +22,15 @@ pub fn get_pixmaps(level: u8, is_charging: bool) -> Vec<ksni::Icon> {
     ]
 }
 
+pub fn get_placeholder_pixmaps() -> Vec<ksni::Icon> {
+    vec![
+        embedded_to_ksni(get_placeholder(16)),
+        embedded_to_ksni(get_placeholder(22)),
+        embedded_to_ksni(get_placeholder(32)),
+        embedded_to_ksni(get_placeholder(48)),
+    ]
+}
+
 fn embedded_to_ksni(icon: &EmbeddedIcon) -> ksni::Icon {
     ksni::Icon {
         width: icon.width,

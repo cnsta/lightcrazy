@@ -247,16 +247,15 @@ fn try_launch_in_terminal(terminal: &str, bin: &str, extra_args: &[&str]) -> boo
 
 impl Tray for BatteryTray {
     fn icon_name(&self) -> String {
-        // Empty string defers to icon_pixmap(). The SNI spec says the host
-        // should prefer pixmap data over a theme name when both are present,
-        // and must use the pixmap when icon_name is empty.
         String::new()
     }
 
     fn icon_pixmap(&self) -> Vec<Icon> {
         let ctx = self.ctx.lock().unwrap();
-        let (level, charging) = ctx.battery.unwrap_or((0, false));
-        crate::tray::icon::get_pixmaps(level, charging)
+        match ctx.battery {
+            Some((level, charging)) => crate::tray::icon::get_pixmaps(level, charging),
+            None => crate::tray::icon::get_placeholder_pixmaps(),
+        }
     }
 
     fn id(&self) -> String {

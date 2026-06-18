@@ -70,6 +70,31 @@ fn main() {
         }
     }
 
+    {
+        let svg_path = icons_dir.join("placeholder.svg");
+        let svg_data = std::fs::read(&svg_path)
+            .unwrap_or_else(|e| panic!("build.rs: failed to read {}: {}", svg_path.display(), e));
+        let tree = {
+            let opts = resvg::usvg::Options::default();
+            resvg::usvg::Tree::from_data(&svg_data, &opts).unwrap_or_else(|e| {
+                panic!("build.rs: failed to parse {}: {}", svg_path.display(), e)
+            })
+        };
+        for &size in SIZES {
+            let argb = rasterize(&tree, size);
+            writeln!(
+                out,
+                "pub static PLACEHOLDER_{}: EmbeddedIcon = EmbeddedIcon {{\n\
+                 \x20   width: {},\n\
+                 \x20   height: {},\n\
+                 \x20   argb32: &{:?},\n\
+                 }};\n",
+                size, size, size, argb
+            )
+            .unwrap();
+        }
+    }
+
     // Lookup function, level snapped to nearest 5%.
     writeln!(
         out,
@@ -98,6 +123,20 @@ fn main() {
     }
 
     writeln!(out, "        _ => &BATTERY_0_32,").unwrap();
+    writeln!(out, "    }}").unwrap();
+    writeln!(out, "}}").unwrap();
+
+    // Placeholder lookup, mirrors get_icon's size-fallback behaviour.
+    writeln!(
+        out,
+        "\npub fn get_placeholder(size: u32) -> &'static EmbeddedIcon {{"
+    )
+    .unwrap();
+    writeln!(out, "    match size {{").unwrap();
+    writeln!(out, "        16 => &PLACEHOLDER_16,").unwrap();
+    writeln!(out, "        22 => &PLACEHOLDER_22,").unwrap();
+    writeln!(out, "        32 => &PLACEHOLDER_32,").unwrap();
+    writeln!(out, "        _  => &PLACEHOLDER_48,").unwrap();
     writeln!(out, "    }}").unwrap();
     writeln!(out, "}}").unwrap();
 
