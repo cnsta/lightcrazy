@@ -85,18 +85,16 @@ fn open_lock_file(name: &str) -> anyhow::Result<File> {
 }
 
 fn lock_path(name: &str) -> PathBuf {
-    if let Some(runtime_dir) = std::env::var_os("XDG_RUNTIME_DIR") {
-        PathBuf::from(runtime_dir).join(format!("{}.lock", name))
-    } else if PathBuf::from("/run").exists() {
-        PathBuf::from("/run/user")
-            .join(std::env::var("UID").unwrap_or_else(|_| "0".to_string()))
-            .join(format!("{}.lock", name))
+    let uid = nix::unistd::Uid::effective().as_raw();
+    let dir = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .filter(|p| p.is_dir())
+        .unwrap_or_else(|| PathBuf::from(format!("/run/user/{uid}")));
+
+    if dir.is_dir() {
+        dir.join(format!("{name}.lock"))
     } else {
-        PathBuf::from("/tmp").join(format!(
-            "{}-{}.lock",
-            name,
-            std::env::var("USER").unwrap_or_else(|_| "unknown".to_string())
-        ))
+        PathBuf::from(format!("/tmp/{name}-{uid}.lock"))
     }
 }
 
